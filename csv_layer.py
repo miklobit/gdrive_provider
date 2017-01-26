@@ -1,9 +1,10 @@
 import csv
 import shutil
+import os
 from tempfile import NamedTemporaryFile
 
 from qgis.core import (QgsVectorLayer, QgsFeature, QgsGeometry, QgsPoint,
-                       QgsMapLayerRegistry, QgsFeatureRequest, QgsMessageLog)
+                       QgsMapLayerRegistry, QgsFeatureRequest, QgsMessageLog,QgsCoordinateReferenceSystem)
 
 logger = lambda msg: QgsMessageLog.logMessage(msg, 'CSV Provider Example', 1)
 
@@ -13,14 +14,22 @@ class CsvLayer():
 
     dirty = False
     doing_attr_update = False
+    geom_types = ("Point", "LineString", "Polygon")
 
-    def __init__(self, csv_path):
+
+    def __init__(self, csv_path, crs_def = None, geom_type = None, fields = None):
         """ Initialize the layer by reading the CSV file, creating a memory
         layer, and adding records to it """
+
         # Save the path to the file soe we can update it in response to edits
+        #
+        if crs_def:
+            self.crs_def = crs_def
+        else:
+            self.crs_def = QgsCoordinateReferenceSystem("EPSG:4857")
         self.csv_path = csv_path
         self.csv_file = open(csv_path, 'rb')
-        self.reader = csv.reader(self.csv_file)
+        self.reader = csv.reader(self.csv_file,delimiter=';', quotechar='"')
         self.header = self.reader.next()
         logger(str(self.header))
         # Get sample
@@ -28,6 +37,7 @@ class CsvLayer():
         self.field_sample = dict(zip(self.header, sample))
         logger("sample %s" % str(self.field_sample))
         field_name_types = {}
+        self.geom_type = geom_type
         # create dict of fieldname:type
         for key in self.field_sample.keys():
             if self.field_sample[key].isdigit():
@@ -39,15 +49,20 @@ class CsvLayer():
                 except ValueError:
                     field_type = 'string'
             field_name_types[key] = field_type
+        #geometry recognization
+        for geom_type in self.geom_types:
+            if geom_type.upper() in self.field_sample['WKT'].upper():
+                self.geom_type = geom_type
         logger(str(field_name_types))
         # Build up the URI needed to create memory layer
-        self.uri = self.uri = "Point?crs=epsg:4326"
+        self.uri = self.uri = "Multi%s?crs=%s" % (self.geom_type, self.crs_def.authid())
         for fld in self.header:
-            self.uri += '&field={}:{}'.format(fld, field_name_types[fld])
+            if fld != 'WKT':
+                self.uri += '&field={}:{}'.format(fld, field_name_types[fld])
 
         logger(self.uri)
         # Create the layer
-        self.lyr = QgsVectorLayer(self.uri, 'cities.csv', 'memory')
+        self.lyr = QgsVectorLayer(self.uri, os.path.basename(self.csv_path), 'memory')
         self.add_records()
         # done with the csv file
         self.csv_file.close()
@@ -75,14 +90,15 @@ class CsvLayer():
             flds = dict(zip(self.header, row))
             # logger("This row: %s" % flds)
             feature = QgsFeature()
-            geometry = QgsGeometry.fromPoint(
-                QgsPoint(float(flds['X']), float(flds['Y'])))
-
+            wkt_geom = flds.pop('WKT')
+            geometry = QgsGeometry.fromWkt(wkt_geom)
             feature.setGeometry(geometry)
-            # for key in flds:
-            #    logger("setting attribute for |%s|" % key)
-            #    feature.setAttribute(feature.fieldNameIndex(key), flds[key])
-            feature.setAttributes(row)
+            cleared_row = []
+            for item in row:
+                if not self.geom_type.upper() in item.upper():
+                    logger("setting attribute for |%s|" % item)
+                    cleared_row.append(item)
+            feature.setAttributes(cleared_row)
             self.lyr.addFeature(feature, True)
         self.lyr.commitChanges()
 
@@ -98,13 +114,19 @@ class CsvLayer():
             logger("Updating the CSV")
             features = self.lyr.getFeatures()
             tempfile = NamedTemporaryFile(mode='w', delete=False)
-            writer = csv.writer(tempfile, delimiter=',')
+            writer = csv.writer(tempfile, delimiter=';', quotechar='"', lineterminator='\n')
             # write the header
             writer.writerow(self.header)
             for feature in features:
                 row = []
                 for fld in self.header:
-                    row.append(feature[feature.fieldNameIndex(fld)])
+                    if fld == 'WKT':
+                        geom = feature.geometry()
+                        geom.convertToMultiType()
+                        row.append(geom.exportToWkt())
+                    else:
+                        row.append(feature[feature.fieldNameIndex(fld)])
+                print row
                 writer.writerow(row)
 
             tempfile.close()
@@ -133,13 +155,9 @@ class CsvLayer():
         self.dirty = True
 
     def geometry_changed(self, fid, geom):
-        """ Geometry for a feature changed; update the X and Y attributes for
-        each """
+        """ Geometry for a feature changed; update the X and Y attributes for each """
         feature = self.lyr.getFeatures(QgsFeatureRequest(fid)).next()
-        pt = geom.asPoint()
-        logger("Updating feature {} ({}) X and Y attributes to: {}".format(
-            fid, feature['NAME'], pt.toString()))
-        self.lyr.changeAttributeValue(fid, feature.fieldNameIndex('X'),
-                                      pt.x())
-        self.lyr.changeAttributeValue(fid, feature.fieldNameIndex('Y'),
-                                      pt.y())
+        wkt = geom.exportToWkt()
+        logger("Updating feature {} WKT attributes to: {}".format(fid, wkt))
+        #self.lyr.changeAttributeValue(fid, feature.fieldNameIndex('WKT'),wkt)
+        self.dirty = True
