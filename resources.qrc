@@ -1,5 +1,5 @@
 <RCC>
-    <qresource prefix="/plugins/CSVProvider" >
+    <qresource prefix="/plugins/GoogleDriveProvider" >
         <file>icon.png</file>
     </qresource>
 </RCC>

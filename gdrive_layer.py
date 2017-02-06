@@ -1,15 +1,21 @@
 import csv
 import shutil
 import os
+import io
+import StringIO
+import collections
+
 from tempfile import NamedTemporaryFile
 
 from qgis.core import (QgsVectorLayer, QgsFeature, QgsGeometry, QgsPoint,
                        QgsMapLayerRegistry, QgsFeatureRequest, QgsMessageLog,QgsCoordinateReferenceSystem)
 
-logger = lambda msg: QgsMessageLog.logMessage(msg, 'CSV Provider Example', 1)
+logger = lambda msg: QgsMessageLog.logMessage(msg, 'Googe Drive Provider', 1)
 
 
-class CsvLayer():
+from services import google_authorization, service_drive, service_sheet
+
+class GoogleDriveLayer():
     """ Pretend we are a data provider """
 
     dirty = False
@@ -17,19 +23,25 @@ class CsvLayer():
     geom_types = ("Point", "LineString", "Polygon")
 
 
-    def __init__(self, csv_path, crs_def = None, geom_type = None, fields = None):
-        """ Initialize the layer by reading the CSV file, creating a memory
+    def __init__(self, authorization, layer_name, sheet_id = None, qgis_layer = None, crs_def = None, geom_type = None, fields = None):
+        """ Initialize the layer by reading the Google drive sheet, creating a memory
         layer, and adding records to it """
 
         # Save the path to the file soe we can update it in response to edits
-        #
+        
+        self.service_drive = service_drive(authorization)
+        if sheet_id:
+            self.sheet_id = sheet_id
+        elif qgis_layer:
+            result = self.service_drive.upload_sheet(sheetName=qgis_layer.name(), csv_file_obj = self.qgis_layer_to_csv(qgis_layer))
+            self.sheet_id = result['id']
+        self.reader = self.service_drive.download_sheet(self.sheet_id)
         if crs_def:
             self.crs_def = crs_def
-        else:
+        elif qgis_layer:
+            self.crs_def = qgis_layer.crs()
+        else: # default to lon/lat geometry
             self.crs_def = QgsCoordinateReferenceSystem("EPSG:4857")
-        self.csv_path = csv_path
-        self.csv_file = open(csv_path, 'rb')
-        self.reader = csv.reader(self.csv_file,delimiter=';', quotechar='"')
         self.header = self.reader.next()
         logger(str(self.header))
         # Get sample
@@ -62,10 +74,8 @@ class CsvLayer():
 
         logger(self.uri)
         # Create the layer
-        self.lyr = QgsVectorLayer(self.uri, os.path.basename(self.csv_path), 'memory')
+        self.lyr = QgsVectorLayer(self.uri, layer_name, 'memory')
         self.add_records()
-        # done with the csv file
-        self.csv_file.close()
 
         # Make connections
         self.lyr.editingStarted.connect(self.editing_started)
@@ -74,14 +84,16 @@ class CsvLayer():
         self.lyr.committedFeaturesAdded.connect(self.features_added)
         self.lyr.committedFeaturesRemoved.connect(self.features_removed)
         self.lyr.geometryChanged.connect(self.geometry_changed)
-
+        
+        if qgis_layer:
+            self.lyr.setRendererV2(qgis_layer.rendererV2())
         # Add the layer the map
         QgsMapLayerRegistry.instance().addMapLayer(self.lyr)
 
     def add_records(self):
-        """ Add records to the memory layer by reading the CSV file """
+        """ Add records to the memory layer by reading the Google Drive Sheet """
         # Return to beginning of csv file
-        self.csv_file.seek(0)
+        self.reader = self.service_drive.download_sheet(self.sheet_id)
         # Skip the header
         self.reader.next()
         self.lyr.startEditing()
@@ -113,8 +125,8 @@ class CsvLayer():
         if self.dirty:
             logger("Updating the CSV")
             features = self.lyr.getFeatures()
-            tempfile = NamedTemporaryFile(mode='w', delete=False)
-            writer = csv.writer(tempfile, delimiter=';', quotechar='"', lineterminator='\n')
+            tempfile = StringIO.StringIO()#NamedTemporaryFile(mode='w', delete=False)
+            writer = csv.writer(tempfile, delimiter=',', quotechar='"', lineterminator='\n')
             # write the header
             writer.writerow(self.header)
             for feature in features:
@@ -128,10 +140,9 @@ class CsvLayer():
                         row.append(feature[feature.fieldNameIndex(fld)])
                 print row
                 writer.writerow(row)
-
-            tempfile.close()
-            shutil.move(tempfile.name, self.csv_path)
-
+            #tempfile.close()
+            #shutil.move(tempfile.name, self.csv_path)
+            print "UPLOAD: ",self.service_drive.upload_sheet(csv_file_obj=tempfile, update_sheetId=self.sheet_id)
             self.dirty = False
 
     def attributes_changed(self, layer, changes):
@@ -161,3 +172,27 @@ class CsvLayer():
         logger("Updating feature {} WKT attributes to: {}".format(fid, wkt))
         #self.lyr.changeAttributeValue(fid, feature.fieldNameIndex('WKT'),wkt)
         self.dirty = True
+
+    def qgis_layer_to_csv(self,qgis_layer):
+        stream = io.BytesIO()
+        writer = csv.writer(stream, delimiter=',', quotechar='"', lineterminator='\n')
+        row = ["WKT"]
+        for feat in qgis_layer.getFeatures():
+            for field in feat.fields().toList():
+                row.append(field.name().encode("utf-8"))
+            break
+        writer.writerow(row)
+        for feat in qgis_layer.getFeatures():
+            row = [feat.geometry().exportToWkt(precision=10)]
+            for field in feat.fields().toList():
+                if type(feat[field.name()]) == unicode:
+                    content = feat[field.name()].encode("utf-8")
+                else:
+                    content = feat[field.name()]
+                row.append(content)
+            writer.writerow(row)
+        # print stream.getvalue()
+        stream.seek(0)
+        #csv.reader(stream, delimiter=',', quotechar='"', lineterminator='\n')
+        return stream
+

@@ -21,7 +21,14 @@
  ***************************************************************************/
  This script initializes the plugin, making it known to QGIS.
 """
+import os 
+import site
+import sys
 
+site.addsitedir(os.path.join(os.path.dirname(__file__),'ext-libs'))
+
+print os.path.join(os.path.dirname(__file__),'ext-libs')
+#print sys.modules['rsa'] = None
 
 # noinspection PyPep8Naming
 def classFactory(iface):  # pylint: disable=invalid-name
@@ -31,5 +38,5 @@ def classFactory(iface):  # pylint: disable=invalid-name
     :type iface: QgsInterface
     """
     #
-    from .csv_provider import CSVProvider
-    return CSVProvider(iface)
+    from .gdrive_provider import Google_Drive_Provider
+    return Google_Drive_Provider(iface)
