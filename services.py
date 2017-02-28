@@ -23,7 +23,7 @@
 
 
 #QT4 specific
-from PyQt4.QtCore import QSettings
+from PyQt5.QtCore import QSettings
 
 #QGIS specific
 import qgis.core
@@ -65,7 +65,7 @@ def int_to_a1(n):
 class google_authorization:
 
     def __init__(self, scopes, credential_dir, application_name, client_id, client_secret_file = 'client_secret.json' ):
-        print "authorizing:",client_id
+        print ("authorizing:",client_id)
         self.credential_dir = os.path.abspath(credential_dir)
         if not os.path.exists(credential_dir):
             os.makedirs(credential_dir)
@@ -96,7 +96,7 @@ class google_authorization:
         credentials = self.store.get()
         if not credentials or credentials.invalid:
             flow = client.flow_from_clientsecrets(self.secret_path, self.scopes)
-            print "FLOW",flow
+            print ("FLOW", flow)
             flow.user_agent = self.application_name
             if self.flags:
                 credentials = tools.run_flow(flow, self.store, self.flags)
@@ -146,26 +146,6 @@ class service_drive:
             }
             return metadata
 
-    def ex_list_files(self, mimeTypeFilter = 'application/vnd.google-apps.spreadsheet', shared = None):
-
-        raw_list = self.service.files().list().execute()
-        print "raw_list",raw_list
-        clean_dict = collections.OrderedDict()
-        for item in raw_list['files']:
-            print item
-            if item['mimeType'] == mimeTypeFilter:
-                id = item['id']
-                if not self.isFileTrashed(id) and self.isGooGisSheet(id): 
-                    if clean_dict.keys().count(item['name']) > 0:
-                        key = "%s (%s)" % (item['name'], str(clean_dict.keys().count(item['name'])))
-                    else:
-                        key = item['name']
-                    if shared and self.isFileShared(id):
-                        clean_dict[key] = self.getFileMetadata(id)
-                    elif not shared:
-                        clean_dict[key] = self.getFileMetadata(id)
-        return clean_dict
-
     def isFileShared(self,fileId):
         return 'shared' in self.getFileMetadata(fileId).keys() and self.getFileMetadata(fileId)['shared']
 
@@ -179,7 +159,7 @@ class service_drive:
         query = 'trashed = false and appProperties has { key="isGOOGISsheet" and value="OK" }'
         query = "mimeType = '%s' and trashed = false and appProperties has { key='isGOOGISsheet' and value='OK' }" % mimeTypeFilter
         raw_list = self.service.files().list(orderBy="modifiedTime desc", q=query).execute()
-        print "list_files", raw_list
+        print ("list_files", raw_list)
         clean_dict = collections.OrderedDict()
         for item in raw_list['files']:
             if clean_dict.keys().count(item['name']) > 0:
@@ -205,34 +185,13 @@ class service_drive:
 
     def download_sheet(self,fileId):
         csv_txt = self.download_file(fileId)
-        #print csv_txt
         csv_file = StringIO.StringIO(csv_txt)
         csv_obj = csv.reader(csv_file,delimiter=',', quotechar='"')
-        #print csv_obj
         return csv_obj
     
     def file_property(self, fileId, property):
         metadata = self.service.files().get(fileId=fileId,fields=property).execute()
         return metadata[property]
-
-    def ex_upload_sheet(self, sheetName='GooGIS', body = {}, csv_file_obj = None, csv_path = None, update_sheetId = None):
-        """
-        """
-        body['mimeType'] = 'application/vnd.google-apps.spreadsheet'
-
-        if csv_path or csv_file_obj:
-            if csv_path:
-                media_body = MediaFileUpload(csv_path, mimetype='text/csv', resumable=None)
-            elif csv_file_obj:
-                media_body = MediaIoBaseUpload(csv_file_obj, mimetype='text/csv', resumable=None)
-            if update_sheetId:
-                return self.service.files().update(fileId=update_sheetId, media_body=media_body).execute()
-            else:
-                body['description'] = 'GooGIS sheet'
-                body['name'] = sheetName
-                return self.service.files().create(body=body, media_body=media_body).execute()
-        else:
-            return None
 
     def set_spreadsheet_property(self,fileId, property, value):
         update_body = {
@@ -261,7 +220,6 @@ class service_drive:
             'mimeType': 'application/vnd.google-apps.spreadsheet'
         }
         file = self.service.files().create(body=body, media_body=media_body).execute()
-        #print "CREATE:",file
 
 
 class service_spreadsheet:
@@ -295,12 +253,10 @@ class service_spreadsheet:
                 "range": update_range,
                 "values": new_sheet_data,
             }
-            #print "update_body",update_body
             result = self.service.spreadsheets().values().update(spreadsheetId=self.spreadsheetId,
                                                                  range=update_range,
                                                                  body=update_body,
                                                                  valueInputOption='USER_ENTERED').execute()
-            #print "update", result
         else:
             raise Exception("service_sheet error: no sheet parameters provided")
             return
@@ -327,10 +283,10 @@ class service_spreadsheet:
     def subscribe(self):
         if not self.credentials.client_id in self.get_sheets():
             subscription = self.add_sheet(self.credentials.client_id, hidden=False)
-            print "subscription",subscription
+            print ("subscription",subscription)
             return subscription
         else:
-            print "error multiple session on the same sheet!"
+            print ("error multiple session on the same sheet!")
             self.erase_cells(self.credentials.client_id)
             return self.get_sheets()[self.credentials.client_id]
 
@@ -343,36 +299,31 @@ class service_spreadsheet:
             }
         }
         result = self.service.spreadsheets().batchUpdate(spreadsheetId=self.spreadsheetId, body=update_body).execute()
-        print 'result',result
+        print ('result',result)
         return result
 
     def advertise(self,changes):
-        for sheet_name,sheet_id in self.get_sheets().iteritems():
+        for sheet_name,sheet_id in self.get_sheets().iter():
             if not sheet_name in (self.name,'settings',self.credentials.client_id):
-                print 'advertise', sheet_name,
+                print ('advertise', sheet_name)
                 append_body = {
                     "range": sheet_name+"!A:A",
                     "majorDimension":'COLUMNS',
                     "values": [changes]
                 }
-                print "append_body",append_body
                 result = self.service.spreadsheets().values().append(spreadsheetId=self.spreadsheetId,
                                                                      range=sheet_name+"!A:A",
                                                                      body=append_body,
                                                                      valueInputOption='USER_ENTERED').execute()
-                print 'result_adv',sheet_name,result
 
 
     def update_header(self):
         result = self.service.spreadsheets().values().batchGet(spreadsheetId=self.spreadsheetId, ranges='1:1').execute()
-        #print "service_sheet",result
         self.header_map = {}
         self.header = []
         for i, value in enumerate(result['valueRanges'][0]['values'][0]):
             self.header_map[value] = int_to_a1(i+1)
             self.header.append(value)
-        #print "header",self.header
-        #print "header_map",self.header_map
     
     def get_sheets(self):
         result = {}
@@ -384,12 +335,10 @@ class service_spreadsheet:
     def cell(self,field,row):
         if field in self.header_map.keys():
             A1_coords = self.header_map[field]+str(row)
-            #print field, row, A1_coords
             return self.sheet_cell(A1_coords)
         
     def sheet_cell(self,A1_coords):
         result = self.service.spreadsheets().values().batchGet(spreadsheetId=self.spreadsheetId, ranges=A1_coords, valueRenderOption='UNFORMATTED_VALUE').execute()
-        #print "cell_result",result
         try:
             cell_value = result['valueRanges'][0]['values'][0][0]
         except:
@@ -401,7 +350,6 @@ class service_spreadsheet:
     def set_cell(self, field, row, value):
         if field in self.header_map.keys():
             A1_coords = self.header_map[field]+str(row)
-            #print field, row, A1_coords
             result = self.set_sheet_cell(A1_coords,value)
             if row == 1: #if row 1 is header so update stored header list
                 self.update_header()
@@ -416,15 +364,14 @@ class service_spreadsheet:
             ranges = []
             for (field, row, value) in mods:
                 ranges.append( self.header_map['STATUS'] + str(row))
-            print ranges
+            print (ranges)
             query = self.service.spreadsheets().values().batchGet(spreadsheetId=self.spreadsheetId, ranges=ranges).execute()
-            print query
             for value in query['valueRanges']:
                 if not value["values"][0][0] in ('', '()','D', lockBy):
                     locked = value["values"][0][0]
                     break
         if locked:
-            print "Multi cell update is locked by "+locked
+            print ("Multi cell update is locked by "+locked)
             return None
 
         update_body = {
@@ -444,16 +391,14 @@ class service_spreadsheet:
                 update_body['data'].append(valueRange)
             else:
                 continue
-        print "MULTICELL",update_body
         result = self.service.spreadsheets().values().batchUpdate(spreadsheetId=self.spreadsheetId, body=update_body).execute()
-        print result
-        return self.service.spreadsheets().values().batchUpdate(spreadsheetId=self.spreadsheetId, body=update_body).execute()
+        return result
 
     def get_line(self, majorDimension, line, sheet = None):
         if not sheet:
             sheet = self.name
         ranges = "%s!%s:%s" % (sheet, line, line)
-        print "line ranges:",ranges
+        print ("line ranges:",ranges)
         result = self.service.spreadsheets().values().batchGet(spreadsheetId=self.spreadsheetId,
                                                                ranges=ranges,
                                                                majorDimension=majorDimension,
@@ -558,8 +503,6 @@ class service_spreadsheet:
         for field in self.header[2:]:
             if field[:8] != 'DELETED_':
                 cleaned_header.append(field)
-        #print "cleaned_header",cleaned_header
-        #print fieldPos,cleaned_header[fieldPos]
         self.set_cell(cleaned_header[fieldPos],1,"DELETED_"+cleaned_header[fieldPos])
         return cleaned_header[fieldPos]
 
@@ -622,7 +565,6 @@ class service_spreadsheet:
     def add_sheet(self, title, hidden=False):
         #check if settings exists
         metadata = self.service.spreadsheets().get(spreadsheetId=self.spreadsheetId).execute()
-        #print metadata
         check_sheet_exists = None
         for sheet in  metadata['sheets']:
             if sheet['properties']['title'] == title:
@@ -641,6 +583,5 @@ class service_spreadsheet:
             }]
         }
         result = self.service.spreadsheets().batchUpdate(spreadsheetId=self.spreadsheetId, body=update_body).execute()
-        #print "add_child_sheet",result
         return result['replies'][0]['addSheet']['properties']['sheetId']
         

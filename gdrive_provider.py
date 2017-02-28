@@ -19,9 +19,10 @@
  *                                                                         *
  ***************************************************************************/
 """
-from PyQt4.QtCore import QSettings, QTranslator, qVersion, QCoreApplication, QTimer, QUrl
-from PyQt4.QtGui import QAction, QIcon, QDialog, QProgressBar
-from qgis.core import QgsMapLayer, QgsVectorLayer, QgsProject, QgsMapLayerRegistry
+from PyQt5.QtCore import QSettings, QTranslator, qVersion, QCoreApplication, QTimer, QUrl
+from PyQt5.QtGui import QIcon
+from PyQt5.QtWidgets import QAction, QProgressBar, QDialog
+from qgis.core import QgsMapLayer, QgsVectorLayer, QgsProject
 from qgis.utils import plugins
 # Initialize Qt resources from file resources.py
 import resources_rc
@@ -264,7 +265,7 @@ class Google_Drive_Provider:
         self.iface.legendInterface().removeLegendLayerAction(self.dup_to_google_drive_action)
 
     def GooGISLayers(self):
-        for layer in QgsMapLayerRegistry.instance().mapLayers().values():
+        for layer in QgsProject.instance().mapLayers().values():
             if self.isGooGISLayer(layer):
                 yield layer
 
@@ -279,7 +280,7 @@ class Google_Drive_Provider:
             google_id = layer.customProperty("googleDriveId", defaultValue=None)
             if google_id:
                 self.gdrive_layer = GoogleDriveLayer(self, self.authorization, layer.name(), spreadsheet_id=google_id, loading_layer=layer)
-                print "reading", google_id, layer.id(), self.gdrive_layer.lyr.id()
+                print ("reading", google_id, layer.id(), self.gdrive_layer.lyr.id())
                 #glayer.makeConnections(layer)
                 layer.editingStarted.connect(self.gdrive_layer.editing_started)
                 layer.updateExtents()
@@ -295,49 +296,34 @@ class Google_Drive_Provider:
         layer_c = QgsVectorLayer(os.path.join(self.plugin_dir,'test','dataset','c0509028_LocSitiContaminati.shp'), "layer_c", 'ogr')
         lv = plugins['layerVersion']
         for layer in  (layer_a, layer_b, layer_c ):
-            print "LAYER", layer.name()
+            print ("LAYER", layer.name())
             glayer = GoogleDriveLayer(self, self.authorization, layer.name(), importing_layer=layer, test=True)
             gsheet = glayer.get_service_sheet()
-            glayer.lyr.startEditing()
-            if not layer: #layer_a:
-                for s in ['1','2','3']:
-                    qlv_path = os.path.join(self.plugin_dir,'test','dataset',layer.name()+s+'.qlv')
-                    print "qlv_path "+s, qlv_path
-                    lv.editingStateLoader.setEditsXMLDefinition(qlv_path, batch=True)
-                    if s == '3':
-                        glayer.lyr.rollBack()
-                    else:
-                        glayer.lyr.commitChanges()
-            else:
-                qlv_path = os.path.join(self.plugin_dir,'test','dataset',layer.name()+'.qlv')
-                print "qlv_path", qlv_path
-                lv.editingStateLoader.setEditsXMLDefinition(qlv_path, batch=True)
-                glayer.lyr.commitChanges()
 
-            print "T1", gsheet.cell('Shape_Area',25)
-            print "T2", gsheet.set_cell('Shape_Area',24,234.500)
-            print "T3", gsheet.set_cell('Shape_Area',23,1000)
-            print "T4", gsheet.set_cell('Shape_Leng',22,'CIAOOOOO!')
-            print "T5", gsheet.set_cell('Shape_Leng',21,None)
-            print "T6", gsheet.cell('Shape_Area',23)
-            print "T6", gsheet.cell('Shape_Leng',24)
+            print ("T1", gsheet.cell('Shape_Area',25))
+            print ("T2", gsheet.set_cell('Shape_Area',24,234.500))
+            print ("T3", gsheet.set_cell('Shape_Area',23,1000))
+            print ("T4", gsheet.set_cell('Shape_Leng',22,'CIAOOOOO!'))
+            print ("T5", gsheet.set_cell('Shape_Leng',21,None))
+            print ("T6", gsheet.cell('Shape_Area',23))
+            print ("T6", gsheet.cell('Shape_Leng',24))
             gsheet.add_sheet('byebye')
             gsheet.set_sheet_cell('byebye!A1', 'ciao')
-            print "FORMULA =SUM(SHEET!F2:F30):",gsheet.evaluate_formula('=SUM(SHEET!F2:F30)')
-            print "FORMULA =MAX(SHEET!C2:C):",gsheet.evaluate_formula('=MAX(SHEET!C2:C)')
+            print ("FORMULA =SUM(SHEET!F2:F30):",gsheet.evaluate_formula('=SUM(SHEET!F2:F30)')))
+            print ("FORMULA =MAX(SHEET!C2:C):",gsheet.evaluate_formula('=MAX(SHEET!C2:C)')))
             # gsheet.set_cell('barabao',33, 'ciao')
             fid = gsheet.new_fid()
-            print "NEW FID", fid
+            print ("NEW FID", fid)
             update_fieds = list(set(gsheet.header) - set(['WKTGEOMETRY','STATUS']))
-            print "update_fieds", update_fieds
-            print "UPDATE DICT",dict(zip(update_fieds,["UNO",fid,34234,665.345,455.78,"HH"]))
-            print "APPEND_ROW", gsheet.add_row(dict(zip(update_fieds,['10000',"UNO",fid,34234,665.345,455.78,"HH"])))
-            print "APPEND_COLUMN", gsheet.add_column(["UNO",fid,34234,665.345,455.78,"HH"])
-            print "CRS", gsheet.crs()
-            print "NEW_FID", gsheet.new_fid()
-            print "DELETED FIELD 5", gsheet.mark_field_as_deleted(5)
-            print glayer.service_drive.trash_spreadsheet(glayer.get_gdrive_id())
-        print "TEST ENDED"
+            print ("update_fieds", update_fieds)
+            print ("UPDATE DICT",dict(zip(update_fieds,["UNO",fid,34234,665.345,455.78,"HH"])))
+            print ("APPEND_ROW", gsheet.add_row(dict(zip(update_fieds,['10000',"UNO",fid,34234,665.345,455.78,"HH"]))))
+            print ("APPEND_COLUMN", gsheet.add_column(["UNO",fid,34234,665.345,455.78,"HH"]))
+            print ("CRS", gsheet.crs())
+            print ("NEW_FID", gsheet.new_fid())
+            print ("DELETED FIELD 5", gsheet.mark_field_as_deleted(5))
+            print (glayer.service_drive.trash_spreadsheet(glayer.get_gdrive_id()))
+        print ("TEST ENDED")
 
     def load_available_sheets(self):
         bak_available_list_filepath = os.path.join(self.plugin_dir,'credentials','available_sheets.json')
@@ -350,7 +336,6 @@ class Google_Drive_Provider:
     def refresh_available(self):
         available_list_filepath = os.path.join(self.plugin_dir,'credentials','available_sheets.json')
         self.available_sheets = self.myDrive.list_files()
-        #print self.available_sheets
         with io.open(available_list_filepath, 'w', encoding='utf-8') as available_file:
             available_file.write(unicode(json.dumps(self.available_sheets, ensure_ascii=False)))
         self.dlg.listWidget.clear()
@@ -394,12 +379,12 @@ class Google_Drive_Provider:
     def load_sheet(self,item):
         sheet_name = item.text()
         sheet_id = self.available_sheets[sheet_name]
-        print sheet_id
+        print (sheet_id)
         self.gdrive_layer = GoogleDriveLayer(self, self.authorization, sheet_name, spreadsheet_id=sheet_id)
 
     def dup_to_google_drive(self):
         currentLayer = self.iface.legendInterface().currentLayer()
-        print currentLayer.name()
+        print (currentLayer.name())
         self.gdrive_layer = GoogleDriveLayer(self, self.authorization, currentLayer.name(), importing_layer=currentLayer)
         #update available list without refreshing
         try:
@@ -408,99 +393,3 @@ class Google_Drive_Provider:
             self.dlg.listWidget.addItems(self.available_sheets.keys())
         except:
             pass
-        
-
-    def dum(self):
-
-        '''
-        s = QSettings() #getting proxy from qgis options settings
-        token = s.value("Google_API_access_token", "")
-        print "STORED TOKEN:",token
-
-        #credentials = client.AccessTokenCredentials(token,'qt4-user-agent/1.0',None)
-        #credentials = client.GoogleCredentials(token,
-                                               'enricofer@gmail.com',
-                                               'cdgsfo',
-                                               None,
-                                               None,
-                                               GOOGLE_TOKEN_URI,
-                                               'pyqt4-user-agent/1.0',
-                                               revoke_uri = None)
-        #print "SCOPES",credentials.retrieve_scopes(httpConnection)
-
-        try:
-            print "SCOPES",credentials.retrieve_scopes(httpConnection)
-        except:
-            print "TOKEN INVALID: asking new credentials"
-            token = self.get_credentials()
-            print "NEW TOKEN:",token
-            credentials = client.AccessTokenCredentials(token,'qt4-user-agent/1.0',None)
-            s.setValue("Google_API_access_token", token)
-
-        if credentials.access_token_expired:
-            print "TOKEN EXPIRED: refreshing"
-            credentials.refresh(http)
-        elif token == '' or credentials is None or credentials.invalid:
-            print "TOKEN INVALID: asking new credentials"
-            token = self.get_credentials()
-            print "NEW TOKEN:",token
-            credentials = client.AccessTokenCredentials(token,'qt4-user-agent/1.0',None)
-            s.setValue("Google_API_access_token", token)
-        else:
-            print "access token ok:",credentials.to_json()
-            #print credentials.retrieve_scopes(httpConnection)
-        '''
-
-        media_body = MediaFileUpload(csv_path, mimetype='text/csv', resumable=None)
-        body = {
-            'name': os.path.basename(csv_path),
-            'description': 'GooGIS sheet',
-            'mimeType': 'application/vnd.google-apps.spreadsheet'
-        }
-        file = service_drive.files().create(body=body, media_body=media_body).execute()
-        print file
-
-        #gs = Sheets.from_files(os.path.join(os.path.dirname(__file__), 'credentials','sheets.googleapis.com-python-quickstart.json'))
-        #print gs
-        #tab = gs[file['id']]
-        #print tab
-
-        list = service_sheets.spreadsheets().values().get(spreadsheetId=file['id'], range='B2:B', valueRenderOption = 'UNFORMATTED_VALUE').execute()
-        print list
-
-        sheet_metadata = service_sheets.spreadsheets().get(spreadsheetId=file['id']).execute()
-        print sheet_metadata
-        update_body = {
-            "requests": [{
-                "findReplace": {
-                               # Finds and replaces data in cells over a range, sheet, or all sheets. # Finds and replaces occurrences of some text with other text.
-                                   #"includeFormulas": True or False,
-                               # True if the search should include cells with formulas.
-                                   # False to skip cells with formulas.
-                                   "matchEntireCell": True, #True or False,  # True if the find value should match the entire cell.
-                                   "allSheets": None,  # True to find/replace over all sheets.
-                                   #"matchCase": True or False,  # True if the search is case sensitive.
-                                   "find": '8',  # The value to search.
-                                   "range": {
-                                        "sheetId": sheet_metadata['sheets'][0]['properties']['sheetId'], # The sheet this range is on.
-                                        "startRowIndex": 1, # The start row (inclusive) of the range, or not set if unbounded.
-                                        #"endRowIndex": 42, # The end row (exclusive) of the range, or not set if unbounded.
-                                        "startColumnIndex": 1, # The start column (inclusive) of the range, or not set if unbounded.
-                                        "endColumnIndex": 2, # The end column (exclusive) of the range, or not set if unbounded.
-                                    },
-                                   #"searchByRegex": None,  # True if the find value is a regex.
-                                   # The regular expression and replacement should follow Java regex rules
-                                   # at https://docs.oracle.com/javase/8/docs/api/java/util/regex/Pattern.html.
-                                   # The replacement string is allowed to refer to capturing groups.
-                                   # For example, if one cell has the contents `"Google Sheets"` and another
-                                   # has `"Google Docs"`, then searching for `"o.* (.*)"` with a replacement of
-                                   # `"$1 Rocks"` would change the contents of the cells to
-                                   # `"GSheets Rocks"` and `"GDocs Rocks"` respectively.
-                                   #"sheetId": 42,  # The sheet to find/replace over.
-                                   #"replacement": '8',  # The value to use as the replacement.
-                               }
-            }]
-        }
-
-        find = service_sheets.spreadsheets().batchUpdate(spreadsheetId=file['id'],body=update_body).execute()
-        print find

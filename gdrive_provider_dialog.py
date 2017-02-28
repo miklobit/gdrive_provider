@@ -23,13 +23,13 @@
 
 import os
 
-from PyQt4 import QtGui, uic
+from PyQt5 import QtWidget, uic
 
 FORM_CLASS, _ = uic.loadUiType(os.path.join(
     os.path.dirname(__file__), 'gdrive_provider_dialog_base.ui'))
 
 
-class GoogleDriveProviderDialog(QtGui.QDialog, FORM_CLASS):
+class GoogleDriveProviderDialog(QtWidget.QDialog, FORM_CLASS):
     def __init__(self, parent=None):
         """Constructor."""
         super(GoogleDriveProviderDialog, self).__init__(parent)

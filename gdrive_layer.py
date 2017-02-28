@@ -11,12 +11,12 @@ import thread
 import traceback
 
 from tempfile import NamedTemporaryFile
-from PyQt4.QtXml import QDomDocument
-from PyQt4.QtGui import QProgressBar
-from PyQt4.QtCore import QObject, pyqtSignal, QThread, QVariant, Qt
+from PyQt5.QtXml import QDomDocument
+from PyQt5.QtWidgets import QProgressBar
+from PyQt5.QtCore import QObject, pyqtSignal, QThread, QVariant, Qt
 
 from qgis.core import (QgsVectorLayer, QgsFeature, QgsGeometry, QgsExpression, QgsField,
-                       QgsMapLayerRegistry, QgsFeatureRequest, QgsMessageLog,QgsCoordinateReferenceSystem)
+                       QgsProject, QgsFeatureRequest, QgsMessageLog,QgsCoordinateReferenceSystem)
 
 from qgis.gui import QgsMessageBar
 
@@ -91,8 +91,8 @@ class GoogleDriveLayer(QObject):
         # Build up the URI needed to create memory layer
         if loading_layer:
             self.lyr = loading_layer
-            print "LOADIN", self.lyr, loading_layer
-            attrIds = [i for i in range (0, self.lyr.fields().count())]
+            print ("LOADIN", self.lyr, loading_layer)
+            attrIds = [i for i in range(0, self.lyr.fields().count())]
             self.lyr.dataProvider().deleteAttributes(attrIds)
             self.lyr.updateFields()
         else:
@@ -121,7 +121,7 @@ class GoogleDriveLayer(QObject):
 
         # Add the layer the map
         if not loading_layer:
-            QgsMapLayerRegistry.instance().addMapLayer(self.lyr)
+            QgsProject.instance().addMapLayer(self.lyr)
         else:
             pass
             #self.lyr.editingStarted.emit()
@@ -153,7 +153,7 @@ class GoogleDriveLayer(QObject):
                 geometry = QgsGeometry.fromWkt(wkt_geom)
                 feature.setGeometry(geometry)
                 cleared_row = [] #[fid]
-                for field, attribute in flds.iteritems():
+                for field, attribute in flds.iter():
                     if field[:8] != 'DELETED_': #skip deleted fields
                         if attribute == '()':
                             cleared_row.append(qgis.core.NULL)
@@ -161,7 +161,6 @@ class GoogleDriveLayer(QObject):
                             cleared_row.append(attribute)
                     else:
                         logger( "DELETED " + field)
-                #print "cleared_row", cleared_row
                 feature.setAttributes(cleared_row)
                 self.lyr.addFeature(feature)
         self.lyr.commitChanges()
@@ -177,13 +176,13 @@ class GoogleDriveLayer(QObject):
         try:
             self.service_sheet.sheet_cell("A1")
         except:
-            print "renew authorization"
+            print ("renew authorization")
             self.service_sheet.get_service()
 
 
     def update_from_subscription(self):
         bar = progressBar(self, 'updating local layer from remote')
-        print "canEdit", self.service_sheet.canEdit
+        print ("canEdit", self.service_sheet.canEdit)
         if self.service_sheet.canEdit:
             updates = self.service_sheet.get_line('COLUMNS','A', sheet=self.client_id)
         else:
@@ -195,7 +194,7 @@ class GoogleDriveLayer(QObject):
                 updates = []
         if updates:
             self.service_sheet.erase_cells(self.client_id)
-        print "UPDATES", updates
+        print ("UPDATES", updates)
         for update in updates:
             decode_update = update.split("|")
             if decode_update[0] in ('new_feature', 'delete_feature', 'update_geometry', 'update_attributes'):
@@ -210,35 +209,34 @@ class GoogleDriveLayer(QObject):
                     sheet_feature_id = decode_update[1]
                     feat = self.lyr.getFeatures(QgsFeatureRequest(QgsExpression(' "FEATUREID" = %s' % sheet_feature_id))).next()
                     if   decode_update[0] == 'delete_feature':
-                        print "updating from subscription, delete_feature: " + str(self.lyr.dataProvider().deleteFeatures([feat.id()]))
+                        print ("updating from subscription, delete_feature: " + str(self.lyr.dataProvider().deleteFeatures([feat.id()])))
                     elif decode_update[0] == 'update_geometry':
                         update_set = {feat.id(): QgsGeometry().fromWkt(zlib.decompress(base64.b64decode(sheet_feature[0])))}
-                        print "update_set", update_set
-                        print "updating from subscription, update_geometry: " + str(self.lyr.dataProvider().changeGeometryValues(update_set))
+                        print ("update_set", update_set)
+                        print ("updating from subscription, update_geometry: " + str(self.lyr.dataProvider().changeGeometryValues(update_set)))
                     elif decode_update[0] == 'update_attributes':
                         new_attributes = sheet_feature_id[2:]
                         attributes_map = {}
                         for i in range(0, len(new_attributes)):
                             attributes_map[i] = new_attributes[i]
                         update_map = {feat.id(): attributes_map,}
-                        print "update_map", update_map
-                        print "updating from subscription, update_attributes: " +(self.lyr.dataProvider().changeAttributeValues(update_map))
+                        print ("update_map", update_map)
+                        print ("updating from subscription, update_attributes: " +(self.lyr.dataProvider().changeAttributeValues(update_map)))
             elif decode_update[0] == 'add_field':
                 field_a1_notation = self.service_sheet.header_map[decode_update[1]]
                 type_def = self.service_sheet.sheet_cell('settings!%s1' % field_a1_notation)
                 type_def_decoded = type_def.split("|")
                 new_field = QgsField(name=decode_update[1],type=int(type_def_decoded[0]), len=int(type_def_decoded[1]), prec=int(type_def_decoded[2]))
-                print "updating from subscription, add_field: ", + (self.lyr.dataProvider().addAttributes([new_field]))
+                print ("updating from subscription, add_field: ", + (self.lyr.dataProvider().addAttributes([new_field])))
                 self.lyr.updateFields()
             elif decode_update[0] == 'delete_field':
-                print "updating from subscription, delete_field: " + str(self.lyr.dataProvider().deleteAttributes([self.lyr.dataProvider().fields().fieldNameIndex(decode_update[1])]))
+                print ("updating from subscription, delete_field: " + str(self.lyr.dataProvider().deleteAttributes([self.lyr.dataProvider().fields().fieldNameIndex(decode_update[1])])))
                 self.lyr.updateFields()
         bar.stop("local layer updated")
 
     def editing_started(self):
         """ Connect to the edit buffer so we can capture geometry and attribute
         changes """
-        print "editing"
         self.renew_connection()
         self.update_from_subscription()
         self.bar = None
@@ -271,7 +269,6 @@ class GoogleDriveLayer(QObject):
             else:
                 thread.start_new_thread(self.lock_feature, (fid,))
             #logger("active threads: "+ str( self.activeThreads))
-            #print "active threads: ", self.activeThreads
             #self.lock_feature(fid)
 
 
@@ -292,7 +289,6 @@ class GoogleDriveLayer(QObject):
             #else:
                 #pass
                 #logger( "LOCK ERROR", "FEATURE %s IS LOCKED BY: %s, EDITS WILL NOT BE SAVED" % (locking_row_id ,status))
-                #print "LOCK ERROR", "FEATURE %s IS LOCKED BY: %s, EDITS WILL NOT BE SAVED" % (locking_row_id ,status)
                 #self.iface.messageBar().pushMessage("LOCK ERROR", "FEATURE %s IS LOCKED BY: %s, EDITS WILL NOT BE SAVED" % (locking_row_id ,status),level=QgsMessageBar.CRITICAL)
                 #self.invalidEdit.emit()
                 #self.lyr.rollBack()
@@ -306,7 +302,7 @@ class GoogleDriveLayer(QObject):
         before rollback changes status field is cleared
         """
         self.renew_connection()
-        print "ROLLBACK", self.lockedFeatures
+        print ("ROLLBACK", self.lockedFeatures)
         mods = []
         for row_id in self.lockedFeatures:
             logger("rollback changes on feature #"+str(row_id))
@@ -334,10 +330,9 @@ class GoogleDriveLayer(QObject):
         """ Attribute values changed; set the dirty flag """
         if not self.doing_attr_update:
             logger("attributes changed")
-            #print "changes",changes
             value_mods = []
             status_mods = []
-            for fid,attrib_change in changes.iteritems():
+            for fid,attrib_change in changes.iter():
                 feature_changing = self.lyr.getFeatures(QgsFeatureRequest(fid)).next()
                 row_id = feature_changing[0]
                 logger ( "changing row: %s" % row_id)
@@ -345,8 +340,8 @@ class GoogleDriveLayer(QObject):
                 if lock and lock != self.client_id:
                     logger( "cant apply edits to feature, locked by " + lock)
                     continue
-                for attrib_idx, new_value in attrib_change.iteritems():
-                    fieldName = QgsMapLayerRegistry.instance().mapLayer(layer).fields().field(attrib_idx).name()
+                for attrib_idx, new_value in attrib_change.iter():
+                    fieldName = QgsProject.instance().mapLayer(layer).fields().field(attrib_idx).name()
                     if fieldName == 'FEATUREID':
                         logger("can't modify FEATUREID")
                         continue
@@ -371,11 +366,9 @@ class GoogleDriveLayer(QObject):
         self.deleted_list = []
         for deleted in self.lyr.editBuffer().deletedAttributeIds():
             self.deleted_list.append(self.lyr.fields().at(deleted).name())
-        print self.deleted_list
 
         logger("attributes_added")
         for field in self.lyr.editBuffer().addedAttributes():
-            print "ADDED FIELD", field.name()
             self.service_sheet.add_column([field.name()], fill_with_null = True)
         '''
         pass
@@ -408,15 +401,10 @@ class GoogleDriveLayer(QObject):
             new_fid = self.service_sheet.new_fid()
             self.lyr.dataProvider().changeAttributeValues({feature.id() : {0: new_fid}})
             feature.setAttribute(0, new_fid)
-            '''
-            print "WKB", base64.b64encode(feature.geometry().asWkb())
-            print "WKB", base64.b64encode(zlib.compress(feature.geometry().asWkb()))
-            print "WKT", base64.b64encode(zlib.compress(feature.geometry().exportToWkt()))
-            '''
             new_row_dict = {}.fromkeys(self.service_sheet.header,'()')
             new_row_dict['WKTGEOMETRY'] = base64.b64encode(zlib.compress(feature.geometry().exportToWkt()))
             new_row_dict['STATUS'] = '()'
-            print feature.attributes()
+            print (feature.attributes())
             for i,item in enumerate(feature.attributes()):
                 fieldName = self.lyr.fields().at(i).name()
                 try:
@@ -439,12 +427,12 @@ class GoogleDriveLayer(QObject):
             for fid in deleted_ids:
                 removed_feat = self.lyr.dataProvider().getFeatures(QgsFeatureRequest(fid)).next()
                 removed_row = removed_feat[0]
-                print "deleting row:",removed_row,removed_feat
+                print ("deleting row:",removed_row,removed_feat)
                 lock = self.service_sheet.cell('STATUS', removed_row)
                 if lock and lock != self.client_id:
                     logger( "feature locked by " + lock)
                     continue
-                print "REMOVED",removed_feat,removed_row
+                print ("REMOVED",removed_feat,removed_row)
                 mods.append(("STATUS",removed_row,'D'))
                 self.changes_log.append('%s|%s' % ('delete_feature', str(removed_row)))
             self.service_sheet.set_multicell(mods,lockBy=self.client_id)
@@ -452,7 +440,7 @@ class GoogleDriveLayer(QObject):
 
     def geometry_changed(self, layer, geom_map):
         """ Geometry for a feature changed; update the X and Y attributes for each """
-        for fid,geom in geom_map.iteritems():
+        for fid,geom in geom_map.iter():
             feature_changing = self.lyr.getFeatures(QgsFeatureRequest(fid)).next()
             row_id = feature_changing[0]
             lock = self.service_sheet.cell('STATUS', row_id)
@@ -490,7 +478,6 @@ class GoogleDriveLayer(QObject):
                         content = feat[field.name()]
                 row.append(content)
             writer.writerow(row)
-        #print stream.getvalue()
         stream.seek(0)
         #csv.reader(stream, delimiter=',', quotechar='"', lineterminator='\n')
         return stream
@@ -505,7 +492,7 @@ class GoogleDriveLayer(QObject):
         for i,feat in enumerate(qgis_layer.getFeatures()):
             row = [base64.b64encode(zlib.compress(feat.geometry().exportToWkt(precision=10))),"()",i+2] #i+2 to make equal featureid and row
             if len(row[0]) > 10000:
-                print feat.id, len(row)
+                print (feat.id, len(row))
             if len(row[0]) > 50000: # ignore features with geometry > 50000 bytes zipped
                 continue
             for field in feat.fields().toList():
@@ -527,7 +514,7 @@ class GoogleDriveLayer(QObject):
         types_array = ["","","4|4|0"] #default featureId type to longint
         for field in fields.toList():
             types_array.append("%d|%d|%d" % (field.type(), field.length(), field.precision()))
-        print "FIELDTYPES",self.service_sheet.update_cells('settings!A1',types_array)
+        print ("FIELDTYPES",self.service_sheet.update_cells('settings!A1',types_array))
 
     def layer_style_to_xml(self,qgis_layer):
         XMLDocument = QDomDocument("qgis_style")
@@ -544,7 +531,6 @@ class GoogleDriveLayer(QObject):
         XMLDocument.setContent(xml)
         XMLStyleNode = XMLDocument.namedItem("style")
         qgis_layer.readSymbology(XMLStyleNode, error)
-        #print "readSymbology error", error
 
     def get_gdrive_id(self):
         return self.spreadsheet_id
