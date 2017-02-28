@@ -32,7 +32,7 @@ import qgis.core
 import httplib2
 import os
 import sys
-import StringIO
+#import StringIO
 import csv
 import collections
 import uuid
@@ -46,9 +46,10 @@ from apiclient.http import MediaFileUpload, MediaIoBaseUpload
 from oauth2client import client, GOOGLE_TOKEN_URI
 from oauth2client import tools
 from oauth2client.file import Storage
+from socks import socks
 
 #Plugin modules
-from utils import slugify
+from .utils import slugify
 
 
 logger = lambda msg: qgis.core.QgsMessageLog.logMessage(msg, 'Googe Drive Provider', 1)
@@ -113,11 +114,13 @@ class google_authorization:
         proxyPort = s.value("proxy/proxyPort", "" )
         proxyUser = s.value("proxy/proxyUser", "" )
         proxyPassword = s.value("proxy/proxyPassword", "" )
+        self.httpConnection = httplib2.Http(ca_certs=os.path.join(self.credential_dir,'cacerts.txt'))
         if proxyEnabled == "true" and proxyType == 'HttpProxy': # test if there are proxy settings
-            proxyConf = httplib2.ProxyInfo(httplib2.socks.PROXY_TYPE_HTTP, proxyHost, int(proxyPort), proxy_user = proxyUser, proxy_pass = proxyPassword)
-        else:
-            proxyConf =  None
-        self.httpConnection = httplib2.Http(proxy_info = proxyConf, ca_certs=os.path.join(self.credential_dir,'cacerts.txt'))
+            socks.setdefaultproxy(socks.PROXY_TYPE_HTTP, proxyHost, int(proxyPort), username = proxyUser, password = proxyPassword)
+            socks.wrapmodule(httplib2)
+            #proxyConf = httplib2.ProxyInfo(socks.PROXY_TYPE_HTTP_NO_TUNNEL, proxyHost, int(proxyPort), proxy_user = proxyUser, proxy_pass = proxyPassword)
+        #else:
+            #proxyConf =  None
         return self.get_credentials().authorize(self.httpConnection)
 
 
@@ -162,8 +165,8 @@ class service_drive:
         print ("list_files", raw_list)
         clean_dict = collections.OrderedDict()
         for item in raw_list['files']:
-            if clean_dict.keys().count(item['name']) > 0:
-                key = "%s (%s)" % (item['name'], str(clean_dict.keys().count(item['name'])))
+            if list(clean_dict.keys()).count(item['name']) > 0:
+                key = "%s (%s)" % (item['name'], str(list(clean_dict.keys()).count(item['name'])))
             else:
                 key = item['name']
             clean_dict[key] = item["id"]
@@ -183,7 +186,7 @@ class service_drive:
         media_obj = self.service.files().export(fileId=fileId, mimeType='text/csv').execute()
         return media_obj
 
-    def download_sheet(self,fileId):
+    def ex_download_sheet(self,fileId):
         csv_txt = self.download_file(fileId)
         csv_file = StringIO.StringIO(csv_txt)
         csv_obj = csv.reader(csv_file,delimiter=',', quotechar='"')
@@ -303,7 +306,7 @@ class service_spreadsheet:
         return result
 
     def advertise(self,changes):
-        for sheet_name,sheet_id in self.get_sheets().iter():
+        for sheet_name,sheet_id in self.get_sheets().items():
             if not sheet_name in (self.name,'settings',self.credentials.client_id):
                 print ('advertise', sheet_name)
                 append_body = {

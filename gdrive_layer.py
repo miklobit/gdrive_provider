@@ -3,17 +3,16 @@ import shutil
 import os
 import io
 import sys
-import StringIO
 import collections
 import base64
 import zlib
-import thread
+import _thread
 import traceback
 
 from tempfile import NamedTemporaryFile
 from PyQt5.QtXml import QDomDocument
 from PyQt5.QtWidgets import QProgressBar
-from PyQt5.QtCore import QObject, pyqtSignal, QThread, QVariant, Qt
+from PyQt5.QtCore import QObject, pyqtSignal, QVariant, Qt
 
 from qgis.core import (QgsVectorLayer, QgsFeature, QgsGeometry, QgsExpression, QgsField,
                        QgsProject, QgsFeatureRequest, QgsMessageLog,QgsCoordinateReferenceSystem)
@@ -25,10 +24,10 @@ import qgis.core
 logger = lambda msg: QgsMessageLog.logMessage(msg, 'Googe Drive Provider', 1)
 
 
-from services import google_authorization, service_drive, service_spreadsheet
+from .services import google_authorization, service_drive, service_spreadsheet
 
 
-from utils import slugify
+from .utils import slugify
 
 
 class progressBar:
@@ -131,7 +130,7 @@ class GoogleDriveLayer(QObject):
         lyr.editingStarted.connect(self.editing_started)
         lyr.editingStopped.connect(self.editing_stopped)
         lyr.committedAttributesDeleted.connect(self.attributes_deleted)
-        lyr.committedAttributesAdded .connect(self.attributes_added)
+        lyr.committedAttributesAdded[list].connect(self.attributes_added)
         lyr.committedFeaturesAdded.connect(self.features_added)
         lyr.committedGeometriesChanges.connect(self.geometry_changed)
         lyr.committedAttributeValuesChanges.connect(self.attributes_changed)
@@ -147,13 +146,13 @@ class GoogleDriveLayer(QObject):
             status = flds.pop('STATUS')
 
             if status != 'D': #non caricare i deleted
-                wkt_geom = zlib.decompress(base64.b64decode(flds.pop('WKTGEOMETRY')))
+                wkt_geom = str(zlib.decompress(base64.b64decode(flds.pop('WKTGEOMETRY'))))
                 #fid = int(flds.pop('FEATUREID'))
                 feature = QgsFeature()
                 geometry = QgsGeometry.fromWkt(wkt_geom)
                 feature.setGeometry(geometry)
                 cleared_row = [] #[fid]
-                for field, attribute in flds.iter():
+                for field, attribute in flds.items():
                     if field[:8] != 'DELETED_': #skip deleted fields
                         if attribute == '()':
                             cleared_row.append(qgis.core.NULL)
@@ -258,7 +257,7 @@ class GoogleDriveLayer(QObject):
             if self.test:
                 self.lock_feature(fid)
             else:
-                thread.start_new_thread(self.lock_feature, (fid,))
+                _thread.start_new_thread(self.lock_feature, (fid,))
             #logger("active threads: "+ str( self.activeThreads))
             #self.lock_feature(fid)
 
@@ -267,7 +266,7 @@ class GoogleDriveLayer(QObject):
             if self.test:
                 self.lock_feature(fid)
             else:
-                thread.start_new_thread(self.lock_feature, (fid,))
+                _thread.start_new_thread(self.lock_feature, (fid,))
             #logger("active threads: "+ str( self.activeThreads))
             #self.lock_feature(fid)
 
@@ -332,7 +331,7 @@ class GoogleDriveLayer(QObject):
             logger("attributes changed")
             value_mods = []
             status_mods = []
-            for fid,attrib_change in changes.iter():
+            for fid,attrib_change in changes.items():
                 feature_changing = self.lyr.getFeatures(QgsFeatureRequest(fid)).next()
                 row_id = feature_changing[0]
                 logger ( "changing row: %s" % row_id)
@@ -340,7 +339,7 @@ class GoogleDriveLayer(QObject):
                 if lock and lock != self.client_id:
                     logger( "cant apply edits to feature, locked by " + lock)
                     continue
-                for attrib_idx, new_value in attrib_change.iter():
+                for attrib_idx, new_value in attrib_change.items():
                     fieldName = QgsProject.instance().mapLayer(layer).fields().field(attrib_idx).name()
                     if fieldName == 'FEATUREID':
                         logger("can't modify FEATUREID")
@@ -440,7 +439,7 @@ class GoogleDriveLayer(QObject):
 
     def geometry_changed(self, layer, geom_map):
         """ Geometry for a feature changed; update the X and Y attributes for each """
-        for fid,geom in geom_map.iter():
+        for fid,geom in geom_map.items():
             feature_changing = self.lyr.getFeatures(QgsFeatureRequest(fid)).next()
             row_id = feature_changing[0]
             lock = self.service_sheet.cell('STATUS', row_id)

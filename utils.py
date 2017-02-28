@@ -12,4 +12,4 @@ def slugify (s):
     slug = slug.encode('ascii', 'ignore').lower()
     #slug = re.sub(r'[^a-z0-9]+', '-', slug).strip('-')
     #slug = re.sub(r'--+',r'-',slug)
-    return slug
+    return str(slug)

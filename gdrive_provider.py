@@ -25,11 +25,10 @@ from PyQt5.QtWidgets import QAction, QProgressBar, QDialog
 from qgis.core import QgsMapLayer, QgsVectorLayer, QgsProject
 from qgis.utils import plugins
 # Initialize Qt resources from file resources.py
-import resources_rc
+#from .resources import resources_rc
 # Import the code for the dialog
-from ui_internal_browser import Ui_InternalBrowser
-from gdrive_provider_dialog import GoogleDriveProviderDialog
-from gdrive_layer import progressBar, GoogleDriveLayer
+from .gdrive_provider_dialog import GoogleDriveProviderDialog
+from .gdrive_layer import progressBar, GoogleDriveLayer
 
 
 import os
@@ -37,7 +36,7 @@ import sys
 import json
 import io
 
-from services import google_authorization, service_drive, service_spreadsheet
+from .services import google_authorization, service_drive, service_spreadsheet
 
 
 # If modifying these scopes, delete your previously saved credentials
@@ -48,53 +47,6 @@ APPLICATION_NAME = 'GooGIS plugin'
 CLIENT_ID = 'fasulloef@gmail.com'
 CLIENT_ID = 'enricofer@gmail.com'
 
-
-class OAuth2Verify(QDialog, Ui_InternalBrowser):
-
-    def __init__(self, target, parent = None):
-        super(OAuth2Verify, self).__init__(parent)
-        self.setupUi(self)
-        #self.webView.page().setNetworkAccessManager(QgsNetworkAccessManager.instance())
-        if target[0:4] == 'http':
-            self.setWindowTitle('Help')
-            self.webView.setUrl(QUrl(target))
-        else:
-            self.setWindowTitle('Auth')
-            self.webView.setHtml(target)
-            self.timer = QTimer()
-            self.timer.setInterval(250)
-            self.timer.timeout.connect(self.codeProbe)
-            self.timer.start()
-            self.auth_code = None
-            self.show()
-            self.raise_()
-
-    def codeProbe(self):
-        frame = self.webView.page().mainFrame()
-        frame.evaluateJavaScript('document.getElementById("code").value')
-        codeElement = frame.findFirstElement("#code")
-        #val = codeElement.evaluateJavaScript("this.value") # redirect urn:ietf:wg:oauth:2.0:oob
-        val = self.webView.title().split('=')
-        if val[0] == 'Success code':
-            self.auth_code = val[1]
-            self.accept()
-        else:
-            self.auth_code = None
-
-    def patchLoginHint(self,loginHint):
-        frame = self.webView.page().mainFrame()
-        frame.evaluateJavaScript('document.getElementById("Email").value = "%s"' % loginHint)
-
-    @staticmethod
-    def getCode(html,loginHint, title=""):
-        dialog = OAuth2Verify(html)
-        dialog.patchLoginHint(loginHint)
-        result = dialog.exec_()
-        dialog.timer.stop()
-        if result == QDialog.Accepted:
-            return dialog.auth_code
-        else:
-            return None
 
 
 class Google_Drive_Provider:
@@ -228,14 +180,14 @@ class Google_Drive_Provider:
     def initGui(self):
         """Create the menu entries and toolbar icons inside the QGIS GUI."""
         
-        icon_path = ':/plugins/GoogleDriveProvider/icon.png'
+        icon_path = os.path.join(self.plugin_dir,"icon.png")#':/plugins/GoogleDriveProvider/icon.png'
         self.add_action(
             icon_path,
             text=self.tr(u'Google Drive Provider '),
             callback=self.run,
             parent=self.iface.mainWindow())
         self.add_action(
-            ':/plugins/GoogleDriveProvider/test.png',
+            os.path.join(self.plugin_dir,"test.png"),#':/plugins/GoogleDriveProvider/test.png',
             text=self.tr(u'Google Drive Provider test '),
             callback=self.test_suite,
             parent=self.iface.mainWindow())
@@ -243,8 +195,8 @@ class Google_Drive_Provider:
         self.dlg.listWidget.itemDoubleClicked.connect(self.run)
         self.dlg.refreshButton.clicked.connect(self.refresh_available)
         #add contextual menu
-        self.dup_to_google_drive_action = QAction(QIcon(icon_path), "Duplicate to Google drive layer", self.iface.legendInterface() )
-        self.iface.legendInterface().addLegendLayerAction(self.dup_to_google_drive_action, "","01", QgsMapLayer.VectorLayer,True)
+        self.dup_to_google_drive_action = QAction(QIcon(icon_path), "Duplicate to Google drive layer", self.iface)
+        self.iface.insertAddLayerAction(self.dup_to_google_drive_action)
         self.dup_to_google_drive_action.triggered.connect(self.dup_to_google_drive)
         #authorize plugin
         self.authorization = google_authorization(SCOPES,os.path.join(self.plugin_dir,'credentials'),APPLICATION_NAME,CLIENT_ID)
@@ -262,7 +214,7 @@ class Google_Drive_Provider:
             self.iface.removeToolBarIcon(action)
         # remove the toolbar
         del self.toolbar
-        self.iface.legendInterface().removeLegendLayerAction(self.dup_to_google_drive_action)
+        self.iface.removeAddLayerAction(self.dup_to_google_drive_action)
 
     def GooGISLayers(self):
         for layer in QgsProject.instance().mapLayers().values():
@@ -309,8 +261,8 @@ class Google_Drive_Provider:
             print ("T6", gsheet.cell('Shape_Leng',24))
             gsheet.add_sheet('byebye')
             gsheet.set_sheet_cell('byebye!A1', 'ciao')
-            print ("FORMULA =SUM(SHEET!F2:F30):",gsheet.evaluate_formula('=SUM(SHEET!F2:F30)')))
-            print ("FORMULA =MAX(SHEET!C2:C):",gsheet.evaluate_formula('=MAX(SHEET!C2:C)')))
+            print ("FORMULA =SUM(SHEET!F2:F30):",gsheet.evaluate_formula('=SUM(SHEET!F2:F30)'))
+            print ("FORMULA =MAX(SHEET!C2:C):",gsheet.evaluate_formula('=MAX(SHEET!C2:C)'))
             # gsheet.set_cell('barabao',33, 'ciao')
             fid = gsheet.new_fid()
             print ("NEW FID", fid)
