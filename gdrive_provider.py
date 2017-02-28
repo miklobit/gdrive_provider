@@ -19,40 +19,32 @@
  *                                                                         *
  ***************************************************************************/
 """
-from PyQt4.QtCore import QSettings, QTranslator, qVersion, QCoreApplication, QTimer
-from PyQt4.QtGui import QAction, QIcon, QDialog
-from qgis.core import QgsMapLayer
+from PyQt4.QtCore import QSettings, QTranslator, qVersion, QCoreApplication, QTimer, QUrl
+from PyQt4.QtGui import QAction, QIcon, QDialog, QProgressBar
+from qgis.core import QgsMapLayer, QgsVectorLayer, QgsProject, QgsMapLayerRegistry
+from qgis.utils import plugins
 # Initialize Qt resources from file resources.py
 import resources_rc
 # Import the code for the dialog
 from ui_internal_browser import Ui_InternalBrowser
 from gdrive_provider_dialog import GoogleDriveProviderDialog
-from gdrive_layer import GoogleDriveLayer
+from gdrive_layer import progressBar, GoogleDriveLayer
 
 
 import os
 import sys
-import requests
-import httplib2
+import json
+import io
 
-
-#dependencies
-
-from apiclient import discovery
-from apiclient.http import MediaFileUpload
-from oauth2client import client, GOOGLE_TOKEN_URI
-from oauth2client import tools
-from oauth2client.file import Storage
-
-
-from services import google_authorization, service_drive, service_sheet
+from services import google_authorization, service_drive, service_spreadsheet
 
 
 # If modifying these scopes, delete your previously saved credentials
 # at ~/.credentials/sheets.googleapis.com-python-quickstart.json
-SCOPES = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive'
+SCOPES = 'https://www.googleapis.com/auth/spreadsheets.readonly https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive'
 CLIENT_SECRET_FILE = 'GooGIS_client_secret.json'
 APPLICATION_NAME = 'GooGIS plugin'
+CLIENT_ID = 'fasulloef@gmail.com'
 CLIENT_ID = 'enricofer@gmail.com'
 
 
@@ -234,24 +226,34 @@ class Google_Drive_Provider:
 
     def initGui(self):
         """Create the menu entries and toolbar icons inside the QGIS GUI."""
-
+        
         icon_path = ':/plugins/GoogleDriveProvider/icon.png'
         self.add_action(
             icon_path,
             text=self.tr(u'Google Drive Provider '),
             callback=self.run,
             parent=self.iface.mainWindow())
+        self.add_action(
+            ':/plugins/GoogleDriveProvider/test.png',
+            text=self.tr(u'Google Drive Provider test '),
+            callback=self.test_suite,
+            parent=self.iface.mainWindow())
+
         self.dlg.listWidget.itemDoubleClicked.connect(self.run)
+        self.dlg.refreshButton.clicked.connect(self.refresh_available)
         #add contextual menu
         self.dup_to_google_drive_action = QAction(QIcon(icon_path), "Duplicate to Google drive layer", self.iface.legendInterface() )
         self.iface.legendInterface().addLegendLayerAction(self.dup_to_google_drive_action, "","01", QgsMapLayer.VectorLayer,True)
         self.dup_to_google_drive_action.triggered.connect(self.dup_to_google_drive)
         #authorize plugin
         self.authorization = google_authorization(SCOPES,os.path.join(self.plugin_dir,'credentials'),APPLICATION_NAME,CLIENT_ID)
+        #QgsProject.instance().layerLoaded.connect(self.loadGDriveLayers)
+        QgsProject.instance().readProject.connect(self.loadGDriveLayers)
 
 
     def unload(self):
         """Removes the plugin menu item and icon from QGIS GUI."""
+        QgsProject.instance().readProject.disconnect(self.loadGDriveLayers)
         for action in self.actions:
             self.iface.removePluginVectorMenu(
                 self.tr(u'&Google Drive Provider'),
@@ -261,14 +263,114 @@ class Google_Drive_Provider:
         del self.toolbar
         self.iface.legendInterface().removeLegendLayerAction(self.dup_to_google_drive_action)
 
+    def GooGISLayers(self):
+        for layer in QgsMapLayerRegistry.instance().mapLayers().values():
+            if self.isGooGISLayer(layer):
+                yield layer
+
+    def isGooGISLayer(self, layer):
+        if layer.type() != QgsMapLayer.VectorLayer:
+            return
+        use = layer.customProperty("googleDriveId")
+        return not (use == False)
+
+    def loadGDriveLayers(self,dom):
+        for layer in self.GooGISLayers():
+            google_id = layer.customProperty("googleDriveId", defaultValue=None)
+            if google_id:
+                self.gdrive_layer = GoogleDriveLayer(self, self.authorization, layer.name(), spreadsheet_id=google_id, loading_layer=layer)
+                print "reading", google_id, layer.id(), self.gdrive_layer.lyr.id()
+                #glayer.makeConnections(layer)
+                layer.editingStarted.connect(self.gdrive_layer.editing_started)
+                layer.updateExtents()
+
+
+
+    def test_suite(self):
+        #self.sheet_layer = GoogleDriveLayer(self.authorization, sheet_name, sheet_id='1hC8iT7IutoYDVDLlEWF8_op2viNRsUdv8tTVo9RlPkE')
+        #gdrive = service_drive(self.authorization)
+        #gsheet = service_sheet(self.authorization,'1hC8iT7IutoYDVDLlEWF8_op2viNRsUdv8tTVo9RlPkE')
+        layer_a = QgsVectorLayer(os.path.join(self.plugin_dir,'test','dataset','c0601016_SistemiEcorelazionali.shp'), "layer_a", 'ogr')
+        layer_b = QgsVectorLayer(os.path.join(self.plugin_dir,'test','dataset','c0601037_SpecieArboree.shp'), "layer_b", 'ogr')
+        layer_c = QgsVectorLayer(os.path.join(self.plugin_dir,'test','dataset','c0509028_LocSitiContaminati.shp'), "layer_c", 'ogr')
+        lv = plugins['layerVersion']
+        for layer in  (layer_a, layer_b, layer_c ):
+            print "LAYER", layer.name()
+            glayer = GoogleDriveLayer(self, self.authorization, layer.name(), importing_layer=layer, test=True)
+            gsheet = glayer.get_service_sheet()
+            glayer.lyr.startEditing()
+            if not layer: #layer_a:
+                for s in ['1','2','3']:
+                    qlv_path = os.path.join(self.plugin_dir,'test','dataset',layer.name()+s+'.qlv')
+                    print "qlv_path "+s, qlv_path
+                    lv.editingStateLoader.setEditsXMLDefinition(qlv_path, batch=True)
+                    if s == '3':
+                        glayer.lyr.rollBack()
+                    else:
+                        glayer.lyr.commitChanges()
+            else:
+                qlv_path = os.path.join(self.plugin_dir,'test','dataset',layer.name()+'.qlv')
+                print "qlv_path", qlv_path
+                lv.editingStateLoader.setEditsXMLDefinition(qlv_path, batch=True)
+                glayer.lyr.commitChanges()
+
+            print "T1", gsheet.cell('Shape_Area',25)
+            print "T2", gsheet.set_cell('Shape_Area',24,234.500)
+            print "T3", gsheet.set_cell('Shape_Area',23,1000)
+            print "T4", gsheet.set_cell('Shape_Leng',22,'CIAOOOOO!')
+            print "T5", gsheet.set_cell('Shape_Leng',21,None)
+            print "T6", gsheet.cell('Shape_Area',23)
+            print "T6", gsheet.cell('Shape_Leng',24)
+            gsheet.add_sheet('byebye')
+            gsheet.set_sheet_cell('byebye!A1', 'ciao')
+            print "FORMULA =SUM(SHEET!F2:F30):",gsheet.evaluate_formula('=SUM(SHEET!F2:F30)')
+            print "FORMULA =MAX(SHEET!C2:C):",gsheet.evaluate_formula('=MAX(SHEET!C2:C)')
+            # gsheet.set_cell('barabao',33, 'ciao')
+            fid = gsheet.new_fid()
+            print "NEW FID", fid
+            update_fieds = list(set(gsheet.header) - set(['WKTGEOMETRY','STATUS']))
+            print "update_fieds", update_fieds
+            print "UPDATE DICT",dict(zip(update_fieds,["UNO",fid,34234,665.345,455.78,"HH"]))
+            print "APPEND_ROW", gsheet.add_row(dict(zip(update_fieds,['10000',"UNO",fid,34234,665.345,455.78,"HH"])))
+            print "APPEND_COLUMN", gsheet.add_column(["UNO",fid,34234,665.345,455.78,"HH"])
+            print "CRS", gsheet.crs()
+            print "NEW_FID", gsheet.new_fid()
+            print "DELETED FIELD 5", gsheet.mark_field_as_deleted(5)
+            print glayer.service_drive.trash_spreadsheet(glayer.get_gdrive_id())
+        print "TEST ENDED"
+
+    def load_available_sheets(self):
+        bak_available_list_filepath = os.path.join(self.plugin_dir,'credentials','available_sheets.json')
+        if os.path.exists(bak_available_list_filepath):
+            with open(bak_available_list_filepath) as available_file:
+                self.available_sheets = json.load(available_file)
+        else:
+            self.refresh_available()
+
+    def refresh_available(self):
+        available_list_filepath = os.path.join(self.plugin_dir,'credentials','available_sheets.json')
+        self.available_sheets = self.myDrive.list_files()
+        #print self.available_sheets
+        with io.open(available_list_filepath, 'w', encoding='utf-8') as available_file:
+            available_file.write(unicode(json.dumps(self.available_sheets, ensure_ascii=False)))
+        self.dlg.listWidget.clear()
+        self.dlg.listWidget.addItems(self.available_sheets.keys())
 
     def run(self):
         """Run method that performs all the real work"""
         # show the dialog
         
         self.myDrive = service_drive(self.authorization)
+        self.refresh_available()
+        '''
         self.available_sheets = self.myDrive.list_files()
-        print self.available_sheets
+        self.available_sheets = {
+            'TEST1 DELIMITAZIONI': {'id':'1aSI0qrC_mDrkffWK-crxtHugX5TqkjeASv_paovmKpA'},
+            'TEST2 PUA': {'id':'1zwXxp6xMMzSYgbgFpryooF2PY5KWmnsXc0muCESXhQA'},
+            'TEST3 strutVendita': {'id':'1TenhNLcCOJzunqLF2kvlJ3lCdxkJvSyhYqEnWc6pS28'},
+            'TEST2 infra': {'id':'1AnGkUVXzNWt0k9850QvkDjtwoKdrntxe2t1aU7_G4tM'},
+        }
+        '''
         self.dlg.listWidget.clear()
         self.dlg.listWidget.addItems(self.available_sheets.keys())
         #self.myDrive.create_googis_sheet_from_csv("/home/enrico/Scrivania/temp9.csv")
@@ -291,14 +393,21 @@ class Google_Drive_Provider:
 
     def load_sheet(self,item):
         sheet_name = item.text()
-        sheet_id = self.available_sheets[sheet_name]['id']
+        sheet_id = self.available_sheets[sheet_name]
         print sheet_id
-        self.gdrive_layer = GoogleDriveLayer(self.authorization, sheet_name, sheet_id=sheet_id)
+        self.gdrive_layer = GoogleDriveLayer(self, self.authorization, sheet_name, spreadsheet_id=sheet_id)
 
     def dup_to_google_drive(self):
         currentLayer = self.iface.legendInterface().currentLayer()
         print currentLayer.name()
-        self.gdrive_layer = GoogleDriveLayer(self.authorization, currentLayer.name(), qgis_layer=currentLayer)
+        self.gdrive_layer = GoogleDriveLayer(self, self.authorization, currentLayer.name(), importing_layer=currentLayer)
+        #update available list without refreshing
+        try:
+            self.available_sheets[currentLayer.name()] = self.gdrive_layer.spreadsheet_id
+            self.dlg.listWidget.clear()
+            self.dlg.listWidget.addItems(self.available_sheets.keys())
+        except:
+            pass
         
 
     def dum(self):

@@ -95,7 +95,7 @@ def _CreateArgumentParser():
 # argparser is an ArgumentParser that contains command-line options expected
 # by tools.run(). Pass it in as part of the 'parents' argument to your own
 # ArgumentParser.
-argparser = _CreateArgumentParser()
+argparser =  _CreateArgumentParser()
 
 
 class ClientRedirectServer(BaseHTTPServer.HTTPServer):

@@ -25,9 +25,9 @@ import os
 import site
 import sys
 
-site.addsitedir(os.path.join(os.path.dirname(__file__),'ext-libs'))
-
-print os.path.join(os.path.dirname(__file__),'ext-libs')
+site.addsitedir(os.path.join(os.path.dirname(__file__),'extlibs'))
+#global sys.argv
+#sys.argv = [""]
 #print sys.modules['rsa'] = None
 
 # noinspection PyPep8Naming
