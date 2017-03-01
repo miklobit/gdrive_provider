@@ -295,12 +295,10 @@ class service_spreadsheet:
                 "range": update_range,
                 "values": new_sheet_data,
             }
-            #print "update_body",update_body
             result = self.service.spreadsheets().values().update(spreadsheetId=self.spreadsheetId,
                                                                  range=update_range,
                                                                  body=update_body,
                                                                  valueInputOption='USER_ENTERED').execute()
-            #print "update", result
         else:
             raise Exception("service_sheet error: no sheet parameters provided")
             return
