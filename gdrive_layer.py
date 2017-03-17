@@ -12,13 +12,13 @@ import traceback
 
 from tempfile import NamedTemporaryFile
 from PyQt4.QtXml import QDomDocument
-from PyQt4.QtGui import QProgressBar
-from PyQt4.QtCore import QObject, pyqtSignal, QThread, QVariant, Qt
+from PyQt4.QtGui import QProgressBar, QAction, QIcon, QPixmap, QWidget
+from PyQt4.QtCore import QObject, pyqtSignal, QThread, QVariant, QSize, Qt
 
-from qgis.core import (QgsVectorLayer, QgsFeature, QgsGeometry, QgsExpression, QgsField,
+from qgis.core import (QgsVectorLayer, QgsFeature, QgsGeometry, QgsExpression, QgsField, QgsMapLayer, QgsMapRendererParallelJob,
                        QgsMapLayerRegistry, QgsFeatureRequest, QgsMessageLog,QgsCoordinateReferenceSystem)
 
-from qgis.gui import QgsMessageBar
+from qgis.gui import QgsMessageBar, QgsMapCanvas, QgsMapCanvasLayer
 
 import qgis.core
 
@@ -33,6 +33,11 @@ from utils import slugify
 
 class progressBar:
     def __init__(self, parent, msg = ''):
+        '''
+        instatiation methos to progressBar class. It creates a QgsMessageBar with provided msg and a working QProgressBar
+        :param parent:
+        :param msg: string
+        '''
         self.iface = parent.iface
         widget = self.iface.messageBar().createMessage("GooGIS plugin:",msg)
         progressBar = QProgressBar()
@@ -43,6 +48,11 @@ class progressBar:
         self.iface.messageBar().pushWidget(widget, QgsMessageBar.INFO, 50)
 
     def stop(self, msg = ''):
+        '''
+        the progressbar is stopped with a succes message
+        :param msg: string
+        :return:
+        '''
         self.iface.messageBar().clearWidgets()
         message = self.iface.messageBar().createMessage("GooGIS plugin:",msg)
         self.iface.messageBar().pushWidget(message, QgsMessageBar.SUCCESS, 3)
@@ -75,10 +85,11 @@ class GoogleDriveLayer(QObject):
         elif importing_layer:
             layer_as_list = self.qgis_layer_to_list(importing_layer)
             self.service_sheet = service_spreadsheet(authorization, new_sheet_name=importing_layer.name(), new_sheet_data = layer_as_list)
-            self.spreadsheet_id = self.service_sheet.spreadsheetId()
+            self.spreadsheet_id = self.service_sheet.spreadsheetId
             self.service_sheet.set_crs(importing_layer.crs().authid())
             self.service_sheet.set_geom_type(self.geom_types[importing_layer.geometryType()])
             self.service_sheet.set_style(self.layer_style_to_xml(importing_layer))
+            self.service_sheet.set_sld(self.SLD_to_xml(importing_layer))
             self.saveFieldTypes(importing_layer.fields())
 
         self.reader = self.service_sheet.get_sheet_values()
@@ -125,9 +136,17 @@ class GoogleDriveLayer(QObject):
         else:
             pass
             #self.lyr.editingStarted.emit()
+        #create summary if importing
+        if importing_layer:
+            self.update_summary_sheet()
         bar.stop("Layer %s succesfully loaded" % layer_name)
 
     def makeConnections(self,lyr):
+        '''
+        The method handle default signal connections to the connected qgis memory layer
+        :param lyr: qgis layer
+        :return:
+        '''
         lyr.editingStarted.connect(self.editing_started)
         lyr.editingStopped.connect(self.editing_stopped)
         lyr.committedAttributesDeleted.connect(self.attributes_deleted)
@@ -137,6 +156,12 @@ class GoogleDriveLayer(QObject):
         lyr.committedAttributeValuesChanges.connect(self.attributes_changed)
         lyr.layerDeleted.connect(self.unsubscribe)
         lyr.beforeCommitChanges.connect(self.inspect_changes)
+        #add contextual menu
+        self.sync_with_google_drive_action = QAction(QIcon(os.path.join(self.parent.plugin_dir,'sync.png')), "Sync with Google drive", self.iface.legendInterface() )
+        self.iface.legendInterface().addLegendLayerAction(self.sync_with_google_drive_action, "","01", QgsMapLayer.VectorLayer,False)
+        self.iface.legendInterface().addLegendLayerActionForLayer(self.sync_with_google_drive_action, lyr)
+        self.sync_with_google_drive_action.triggered.connect(self.update_from_subscription)
+        lyr.gDriveInterface = self
 
     def add_records(self):
         """ Add records to the memory layer by reading the Google Sheet """
@@ -167,6 +192,10 @@ class GoogleDriveLayer(QObject):
         self.lyr.commitChanges()
 
     def style_changed(self):
+        '''
+        landing method for rendererChanged signal. It stores xml qgis style definition to the setting sheet
+        :return:
+        '''
         logger( "style changed")
         self.service_sheet.set_style(self.layer_style_to_xml(self.lyr))
 
@@ -182,10 +211,17 @@ class GoogleDriveLayer(QObject):
 
 
     def update_from_subscription(self):
+        '''
+        The method updates qgis memory layer with canges made by other users and sincronize the local qgis layer with google sheet spreadsheet
+        :return:
+        '''
+        self.renew_connection()
         bar = progressBar(self, 'updating local layer from remote')
         print "canEdit", self.service_sheet.canEdit
         if self.service_sheet.canEdit:
             updates = self.service_sheet.get_line('COLUMNS','A', sheet=self.client_id)
+            if updates:
+                self.service_sheet.erase_cells(self.client_id)
         else:
             new_changes_log_rows = self.service_sheet.get_line("COLUMNS",'A',sheet="changes_log")
             if len(new_changes_log_rows) > len(self.service_sheet.changes_log_rows):
@@ -193,8 +229,6 @@ class GoogleDriveLayer(QObject):
                 self.service_sheet.changes_log_rows = new_changes_log_rows
             else:
                 updates = []
-        if updates:
-            self.service_sheet.erase_cells(self.client_id)
         print "UPDATES", updates
         for update in updates:
             decode_update = update.split("|")
@@ -233,13 +267,13 @@ class GoogleDriveLayer(QObject):
             elif decode_update[0] == 'delete_field':
                 print "updating from subscription, delete_field: " + str(self.lyr.dataProvider().deleteAttributes([self.lyr.dataProvider().fields().fieldNameIndex(decode_update[1])]))
                 self.lyr.updateFields()
+        self.lyr.triggerRepaint()
         bar.stop("local layer updated")
 
     def editing_started(self):
         """ Connect to the edit buffer so we can capture geometry and attribute
         changes """
         print "editing"
-        self.renew_connection()
         self.update_from_subscription()
         self.bar = None
         if self.service_sheet.canEdit:
@@ -256,6 +290,14 @@ class GoogleDriveLayer(QObject):
             self.lyr.rollBack()
 
     def buffer_geometry_changed(self,fid,geom):
+        '''
+        Landing method for geometryChanged signal.
+        When a geometry is modified, the row related to the modified feature is marked as modified by local user.
+        Further edits to the modified feature are denied to other concurrent users
+        :param fid:
+        :param geom:
+        :return:
+        '''
         if self.editing:
             if self.test:
                 self.lock_feature(fid)
@@ -265,6 +307,15 @@ class GoogleDriveLayer(QObject):
             #self.lock_feature(fid)
 
     def buffer_attributes_changed(self,fid,attr_id,value):
+        '''
+        Landing method for attributeValueChanged signal.
+        When an attribute is modified, the row related to the modified feature is marked as modified by local user.
+        Further edits to the modified feature are denied to other concurrent users
+        :param fid:
+        :param attr_id:
+        :param value:
+        :return:
+        '''
         if self.editing:
             if self.test:
                 self.lock_feature(fid)
@@ -277,8 +328,9 @@ class GoogleDriveLayer(QObject):
 
     def lock_feature(self,fid):
         """
-        the row in google sheet linked to feature that has been modified is locked
-        filling the the STATUS column with the client_id
+        The row in google sheet linked to feature that has been modified is locked
+        Filling the the STATUS column with the client_id.
+        Further edits to the modified feature are denied to other concurrent users
         """
         self.activeThreads += 1
         if fid >= 0 and self.activeThreads < 2: # fid <0 means that the change relates to newly created features not yet present in the sheet
@@ -303,7 +355,7 @@ class GoogleDriveLayer(QObject):
 
     def rollBack(self):
         """
-        before rollback changes status field is cleared
+        before rollback changes status field is cleared and the edits from concurrent user are allowed
         """
         self.renew_connection()
         print "ROLLBACK", self.lockedFeatures
@@ -313,7 +365,10 @@ class GoogleDriveLayer(QObject):
             mods.append(('STATUS', row_id, "()"))
         if mods:
             self.service_sheet.set_multicell(mods)
-        self.lyr.beforeRollBack.disconnect(self.rollBack)
+        try:
+            self.lyr.beforeRollBack.disconnect(self.rollBack)
+        except:
+            pass
 
         #self.lyr.geometryChanged.disconnect(self.buffer_geometry_changed)
         #self.lyr.attributeValueChanged.disconnect(self.buffer_attributes_changed)
@@ -324,14 +379,23 @@ class GoogleDriveLayer(QObject):
         #self.lyr.geometryChanged.disconnect(self.buffer_geometry_changed)
         #self.lyr.attributeValueChanged.disconnect(self.buffer_attributes_changed)
         self.renew_connection()
+        self.update_summary_sheet()
         if self.service_sheet.canEdit:
             self.service_sheet.advertise(self.changes_log)
         self.editing = False
+        if self.dirty:
+            self.update_summary_sheet()
+            self.dirty = None
         if self.bar:
             self.bar.stop("update to remote finished")
 
     def attributes_changed(self, layer, changes):
-        """ Attribute values changed; set the dirty flag """
+        """
+        Landing method for attributeChange.
+        Attribute values changed
+        Edited feature, not locked by other users, are written to the google drive spreadsheets modifying the related rows.
+        Edits are advertized to other concurrent users for subsequent syncronization with remote table
+        """
         if not self.doing_attr_update:
             logger("attributes changed")
             #print "changes",changes
@@ -382,7 +446,10 @@ class GoogleDriveLayer(QObject):
 
     def attributes_added(self, layer, added):
         """
-        Attribute added;
+        Landing method for attributeAdded.
+        Fields (attribute) changed
+        New colums are appended to the google drive spreadsheets creating remote colums syncronized with the local layer fields.
+        Edits are advertized to other concurrent users for subsequent syncronization with remote table
         """
         logger("attributes_added")
         for field in added:
@@ -390,18 +457,27 @@ class GoogleDriveLayer(QObject):
             self.service_sheet.add_column([field.name()], fill_with_null = True)
             self.service_sheet.add_column(["%d|%d|%d" % (field.type(), field.length(), field.precision())],child_sheet="settings", fill_with_null = None)
             self.changes_log.append('%s|%s' % ('add_field', field.name()))
+        self.dirty = True
 
     def attributes_deleted(self, layer, deleted_ids):
-        """ Attribute deleted;"""
+        """
+        Landing method for attributeDeleted.
+        Fields (attribute) are deleted
+        New colums are marked as deleted in the google drive spreadsheets.
+        Edits are advertized to other concurrent users for subsequent syncronization with remote table
+        """
         logger("attributes_deleted")
         for deleted in deleted_ids:
             deleted_name = self.service_sheet.mark_field_as_deleted(deleted)
             self.changes_log.append('%s|%s' % ('delete_field', deleted_name))
+        self.dirty = True
 
 
     def features_added(self, layer, features):
-        """ Features added; update the X and Y attributes for each and set the
-        dirty flag
+        """
+        Landing method for featureAdded.
+        The new features are written adding rows to the google drive spreadsheets .
+        Edits are advertized to other concurrent users for subsequent syncronization with remote table
         """
         logger("features added")
         for feature in features:
@@ -429,8 +505,15 @@ class GoogleDriveLayer(QObject):
             result = self.service_sheet.add_row(new_row_dict)
             sheet_new_row = int(result['updates']['updatedRange'].split('!A')[1].split(':')[0])
             self.changes_log.append('%s|%s' % ('new_feature', str(new_fid)))
+        self.dirty = True
 
     def catch_deleted(self):
+        """
+        Landing method for beforeCommitChanges signal.
+        The method intercepts edits before they were written to the layer so from deleted features
+        can be extracted the feature id of the google drive spreadsheet related rows.
+        The affected rows are marked as deleted and hidden away from the layer syncronization
+        """
         self.bar = progressBar(self, 'updating local edits to remote')
         """ Features removed; but before commit """
         deleted_ids = self.lyr.editBuffer().deletedFeatureIds()
@@ -448,10 +531,18 @@ class GoogleDriveLayer(QObject):
                 mods.append(("STATUS",removed_row,'D'))
                 self.changes_log.append('%s|%s' % ('delete_feature', str(removed_row)))
             self.service_sheet.set_multicell(mods,lockBy=self.client_id)
+            self.dirty = True
 
 
     def geometry_changed(self, layer, geom_map):
-        """ Geometry for a feature changed; update the X and Y attributes for each """
+        """
+        Landing method for geometryChange signal.
+        Features geometries changed
+        The edited geometry, not locked by other users, are written to the google drive spreadsheets modifying the related rows.
+        the WKT geometry definition is zipped and then base64 encoded for a compact storage
+        (sigle cells string contents can't be larger the 50000 bytes)
+        Edits are advertized to other concurrent users for subsequent syncronization with remote table
+        """
         for fid,geom in geom_map.iteritems():
             feature_changing = self.lyr.getFeatures(QgsFeatureRequest(fid)).next()
             row_id = feature_changing[0]
@@ -464,12 +555,22 @@ class GoogleDriveLayer(QObject):
             self.service_sheet.set_cell('STATUS',row_id, '()')
             logger ("Updated FEATUREID %s geometry" % row_id)
             self.changes_log.append('%s|%s' % ('update_geometry', str(row_id)))
+        self.dirty = True
 
     def unsubscribe(self):
+        '''
+        When a read/write layer is removed from the legend the remote subscription sheet is removed
+        :return:
+        '''
         self.renew_connection()
         self.service_sheet.unsubscribe()
 
     def qgis_layer_to_csv(self,qgis_layer):
+        '''
+        method to transform the specified qgis layer in a csv object for uploading
+        :param qgis_layer:
+        :return: csv object
+        '''
         stream = io.BytesIO()
         writer = csv.writer(stream, delimiter=',', quotechar='"', lineterminator='\n')
         row = ["WKTGEOMETRY","FEATUREID","STATUS"]
@@ -496,6 +597,11 @@ class GoogleDriveLayer(QObject):
         return stream
 
     def qgis_layer_to_list(self,qgis_layer):
+        '''
+        method to transform the specified qgis layer in list of rows (field/value) dicts for uploading
+        :param qgis_layer:
+        :return: row list object
+        '''
         row = ["WKTGEOMETRY","STATUS","FEATUREID"]
         for feat in qgis_layer.getFeatures():
             for field in feat.fields().toList():
@@ -524,12 +630,22 @@ class GoogleDriveLayer(QObject):
         return rows
 
     def saveFieldTypes(self,fields):
-        types_array = ["","","4|4|0"] #default featureId type to longint
+        '''
+        writes the layer field types to the setting sheet
+        :param fields:
+        :return:
+        '''
+        types_array = ["s1","s2","4|4|0"] #default featureId type to longint
         for field in fields.toList():
             types_array.append("%d|%d|%d" % (field.type(), field.length(), field.precision()))
         print "FIELDTYPES",self.service_sheet.update_cells('settings!A1',types_array)
 
     def layer_style_to_xml(self,qgis_layer):
+        '''
+        saves qgis style to the setting sheet
+        :param qgis_layer:
+        :return:
+        '''
         XMLDocument = QDomDocument("qgis_style")
         XMLStyleNode = XMLDocument.createElement("style")
         XMLDocument.appendChild(XMLStyleNode)
@@ -538,7 +654,24 @@ class GoogleDriveLayer(QObject):
         xmldoc = XMLDocument.toString(1)
         return xmldoc
 
+    def SLD_to_xml(self,qgis_layer):
+        '''
+        saves SLD style to the setting sheet. Not used, keeped here for further extensions.
+        :param qgis_layer:
+        :return:
+        '''
+        XMLDocument = QDomDocument("sld_style")
+        error = None
+        qgis_layer.exportSldStyle(XMLDocument, error)
+        xmldoc = XMLDocument.toString(1)
+        return xmldoc
+
     def xml_to_layer_style(self,qgis_layer,xml):
+        '''
+        retrieve qgis style from the setting sheet
+        :param qgis_layer:
+        :return:
+        '''
         XMLDocument = QDomDocument()
         error = None
         XMLDocument.setContent(xml)
@@ -547,10 +680,133 @@ class GoogleDriveLayer(QObject):
         #print "readSymbology error", error
 
     def get_gdrive_id(self):
+        '''
+        returns spreadsheet_id associated with layer
+        :return: spreadsheet_id associated with layer
+        '''
         return self.spreadsheet_id
 
     def get_service_drive(self):
+        '''
+        returns the google drive wrapper object associated with layer
+        :return: google drive wrapper object
+        '''
         return self.service_drive
 
     def get_service_sheet(self):
+        '''
+        returns the google spreadsheet wrapper object associated with layer
+        :return: google spreadsheet wrapper object
+        '''
         return self.service_sheet
+
+    def get_layer_metadata(self):
+        '''
+        builds a metadata dict of the current layer to be stored in summary sheet
+        :return:
+        '''
+        #fields = collections.OrderedDict()
+        fields = ""
+        for field in self.lyr.fields().toList():
+            fields += field.name()+'_'+QVariant.typeToName(field.type())[1:]+'|'+str(field.length())+'|'+str(field.precision())+' '
+        #metadata = collections.OrderedDict()
+        metadata = [
+            ['layer_name', self.lyr.name(),],
+            ['gdrive_id', self.service_sheet.spreadsheetId,],
+            ['geometry_type', self.geom_types[self.lyr.geometryType()],],
+            ['features', "'%s" % str(self.lyr.featureCount()),],
+            ['extent', self.lyr.extent().asWktCoordinates(),],
+            ['fields', fields,],
+            ['srid', self.lyr.crs().authid(),],
+            ['proj4_def', "'%s" % self.lyr.crs().toProj4(),]
+        ]
+        return metadata
+
+    def update_summary_sheet(self):
+        #create a layer snapshot and upload it to google drive
+        canvas = QgsMapCanvas()
+        canvas.resize(QSize(300,300))
+        canvas.setCanvasColor(Qt.white)
+        canvas.setExtent(self.lyr.extent())
+        canvas.setLayerSet([QgsMapCanvasLayer(self.lyr)])
+        canvas.refresh()
+        canvas.update()
+        settings = canvas.mapSettings()
+        settings.setLayers([self.lyr.id()])
+        job = QgsMapRendererParallelJob(settings)
+        job.start()
+        job.waitForFinished()
+        image = job.renderedImage()
+        tmp_path = os.path.join(self.parent.plugin_dir,self.service_sheet.name+".png")
+        image.save(tmp_path,"PNG")
+        image_istances = self.service_drive.list_files(mimeTypeFilter='image/png',filename=self.service_sheet.name+".png")
+        print image_istances
+        for imagename, image_prop in image_istances.iteritems():
+            print imagename, image_prop
+            self.service_drive.delete_file(image_prop)
+        result = self.service_drive.upload_image(tmp_path)
+        self.service_drive.add_permission(result['id'],'anyone','reader')
+        webLink = 'https://drive.google.com/uc?export=view&id='+result['id']
+        os.remove(tmp_path)
+        print 'result',result,webLink
+
+        #update layer metadata
+        summary_id = self.service_sheet.add_sheet('summary', no_grid=True)
+        self.service_sheet.erase_cells('summary')
+        metadata = self.get_layer_metadata()
+        range = 'summary!A1:B8'
+        update_body = {
+            "range": range,
+            "values": metadata,
+        }
+        print "update", self.service_sheet.service.spreadsheets().values().update(spreadsheetId=self.spreadsheet_id,range=range, body=update_body, valueInputOption='USER_ENTERED').execute()
+
+        #merge cells to visualize snapshot and aaply image snapshot
+        request_body = {
+            'requests': {
+                'mergeCells': {
+                    "range": {
+                        "sheetId": summary_id,
+                        "startRowIndex": 9,
+                        "endRowIndex": 32,
+                        "startColumnIndex": 0,
+                        "endColumnIndex": 9,
+                    },
+                "mergeType": 'MERGE_ALL'
+                }
+            }
+        }
+        print "merge", self.service_sheet.service.spreadsheets().batchUpdate(spreadsheetId=self.spreadsheet_id, body=request_body).execute()
+        print "image", self.service_sheet.set_sheet_cell('summary!A10','=IMAGE("%s",3)' % webLink)
+
+        #hide worksheets except summary
+        sheets = self.service_sheet.get_sheets()
+        #self.service_sheet.toggle_sheet('summary', sheets['summary'], hidden=None)
+        for sheet_name,sheet_id in sheets.iteritems():
+            if not sheet_name == 'summary':
+                print sheet_name, sheet_id
+                self.service_sheet.toggle_sheet(sheet_name, sheet_id, hidden=True)
+
+        '''
+        request_body = {
+            'requests': {
+                'autoResizeDimensions': {
+                    "dimensions":{
+                        "sheetId": summary_id,
+                        "dimension": 'COLUMNS',
+                        "startIndex": 0,
+                        "endIndex": 1,
+                    }
+                }
+            }
+        }
+        print "resize2", self.service_sheet.service.spreadsheets().batchUpdate(spreadsheetId=self.spreadsheet_id, body=request_body).execute()
+        '''
+
+
+
+
+
+
+        
+

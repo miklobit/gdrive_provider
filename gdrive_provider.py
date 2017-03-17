@@ -2,12 +2,13 @@
 """
 /***************************************************************************
                                  A QGIS plugin
- Example of "faking" a data provider with PyQGIS
+ A plugin for using Google drive sheets as QGIS layer shared between concurrent users
+ portions of code are from https://github.com/g-sherman/pseudo_csv_provider
                               -------------------
         begin                : 2015-03-13
         git sha              : $Format:%H$
-        copyright            : (C) 2015 by GeoApt LLC
-        email                : gsherman@geoapt.com
+        copyright            : (C)2017 Enrico Ferreguti (C)2015 by GeoApt LLC gsherman@geoapt.com
+        email                : enricofer@gmail.com
  ***************************************************************************/
 
 /***************************************************************************
@@ -19,15 +20,15 @@
  *                                                                         *
  ***************************************************************************/
 """
-from PyQt4.QtCore import QSettings, QTranslator, qVersion, QCoreApplication, QTimer, QUrl
-from PyQt4.QtGui import QAction, QIcon, QDialog, QProgressBar
-from qgis.core import QgsMapLayer, QgsVectorLayer, QgsProject, QgsMapLayerRegistry
+from PyQt4.QtCore import QSettings, QTranslator, qVersion, QCoreApplication, QTimer, QUrl, QSize
+from PyQt4.QtGui import QAction, QIcon, QDialog, QProgressBar, QDialogButtonBox, QListWidgetItem, QPixmap
+from qgis.core import QgsMapLayer, QgsVectorLayer, QgsProject, QgsMapLayerRegistry, QgsMessageLog, QgsNetworkAccessManager
 from qgis.utils import plugins
 # Initialize Qt resources from file resources.py
 import resources_rc
 # Import the code for the dialog
 from ui_internal_browser import Ui_InternalBrowser
-from gdrive_provider_dialog import GoogleDriveProviderDialog
+from gdrive_provider_dialog import GoogleDriveProviderDialog, accountDialog, comboDialog, importFromIdDialog
 from gdrive_layer import progressBar, GoogleDriveLayer
 
 
@@ -35,6 +36,9 @@ import os
 import sys
 import json
 import io
+import collections
+import re
+from email.utils import parseaddr
 
 from services import google_authorization, service_drive, service_spreadsheet
 
@@ -44,57 +48,8 @@ from services import google_authorization, service_drive, service_spreadsheet
 SCOPES = 'https://www.googleapis.com/auth/spreadsheets.readonly https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive'
 CLIENT_SECRET_FILE = 'GooGIS_client_secret.json'
 APPLICATION_NAME = 'GooGIS plugin'
-CLIENT_ID = 'fasulloef@gmail.com'
-CLIENT_ID = 'enricofer@gmail.com'
 
-
-class OAuth2Verify(QDialog, Ui_InternalBrowser):
-
-    def __init__(self, target, parent = None):
-        super(OAuth2Verify, self).__init__(parent)
-        self.setupUi(self)
-        #self.webView.page().setNetworkAccessManager(QgsNetworkAccessManager.instance())
-        if target[0:4] == 'http':
-            self.setWindowTitle('Help')
-            self.webView.setUrl(QUrl(target))
-        else:
-            self.setWindowTitle('Auth')
-            self.webView.setHtml(target)
-            self.timer = QTimer()
-            self.timer.setInterval(250)
-            self.timer.timeout.connect(self.codeProbe)
-            self.timer.start()
-            self.auth_code = None
-            self.show()
-            self.raise_()
-
-    def codeProbe(self):
-        frame = self.webView.page().mainFrame()
-        frame.evaluateJavaScript('document.getElementById("code").value')
-        codeElement = frame.findFirstElement("#code")
-        #val = codeElement.evaluateJavaScript("this.value") # redirect urn:ietf:wg:oauth:2.0:oob
-        val = self.webView.title().split('=')
-        if val[0] == 'Success code':
-            self.auth_code = val[1]
-            self.accept()
-        else:
-            self.auth_code = None
-
-    def patchLoginHint(self,loginHint):
-        frame = self.webView.page().mainFrame()
-        frame.evaluateJavaScript('document.getElementById("Email").value = "%s"' % loginHint)
-
-    @staticmethod
-    def getCode(html,loginHint, title=""):
-        dialog = OAuth2Verify(html)
-        dialog.patchLoginHint(loginHint)
-        result = dialog.exec_()
-        dialog.timer.stop()
-        if result == QDialog.Accepted:
-            return dialog.auth_code
-        else:
-            return None
-
+logger = lambda msg: QgsMessageLog.logMessage(msg, 'Googe Drive Provider', 1)
 
 class Google_Drive_Provider:
     """QGIS Plugin Implementation."""
@@ -227,26 +182,54 @@ class Google_Drive_Provider:
     def initGui(self):
         """Create the menu entries and toolbar icons inside the QGIS GUI."""
         
-        icon_path = ':/plugins/GoogleDriveProvider/icon.png'
+        icon_path = os.path.join(self.plugin_dir,'icon.png')
         self.add_action(
             icon_path,
             text=self.tr(u'Google Drive Provider '),
             callback=self.run,
             parent=self.iface.mainWindow())
         self.add_action(
-            ':/plugins/GoogleDriveProvider/test.png',
+            os.path.join(self.plugin_dir,'test.png'),
             text=self.tr(u'Google Drive Provider test '),
             callback=self.test_suite,
             parent=self.iface.mainWindow())
 
+        self.dlg.setWindowIcon(QIcon(os.path.join(self.plugin_dir,'icon.png')))
+        self.dlg.anyoneCanWrite.stateChanged.connect(self.anyoneCanWriteAction)
+        self.dlg.anyoneCanRead.stateChanged.connect(self.anyoneCanReadAction)
+        #self.dlg.updateWriteListButton.clicked.connect(self.updateReadWriteListAction)
+        self.dlg.updateWriteListButton.hide()
+        self.dlg.textEdit_sample.hide()
+        self.dlg.infoTextBox.page().setNetworkAccessManager(QgsNetworkAccessManager.instance())
+        self.dlg.updateReadListButton.clicked.connect(self.updateReadWriteListAction)
+        self.dlg.updateReadListButton.setIcon(QIcon(os.path.join(self.plugin_dir,'shared.png')))
+        self.dlg.accountButton.clicked.connect(self.updateAccountAction)
+        self.dlg.exportToGDriveButton.clicked.connect(self.exportToGDriveAction)
+        self.dlg.importByIdButton.clicked.connect(self.importByIdAction)
         self.dlg.listWidget.itemDoubleClicked.connect(self.run)
         self.dlg.refreshButton.clicked.connect(self.refresh_available)
+        self.dlg.button_box.button(QDialogButtonBox.Ok).setText("Load");
+        orderByDict = collections.OrderedDict([
+            ("order by modified time; descending", "modifiedTime desc"),
+            ("order by modified time; ascending", "modifiedTime"),
+            ("order by name; ascending", 'name'),
+            ("order by name; descending", 'name desc'),
+        ])
+        for txt,data in orderByDict.items():
+            self.dlg.orderByCombo.addItem(txt,data)
+
+
+
         #add contextual menu
         self.dup_to_google_drive_action = QAction(QIcon(icon_path), "Duplicate to Google drive layer", self.iface.legendInterface() )
         self.iface.legendInterface().addLegendLayerAction(self.dup_to_google_drive_action, "","01", QgsMapLayer.VectorLayer,True)
         self.dup_to_google_drive_action.triggered.connect(self.dup_to_google_drive)
         #authorize plugin
-        self.authorization = google_authorization(SCOPES,os.path.join(self.plugin_dir,'credentials'),APPLICATION_NAME,CLIENT_ID)
+        s = QSettings()
+        self.client_id = s.value("GooGIS/gdrive_account",  defaultValue =  None)
+        self.myDrive = None
+        #if self.client_id:
+        #    self.authorization = google_authorization(SCOPES,os.path.join(self.plugin_dir,'credentials'),APPLICATION_NAME,self.client_id)
         #QgsProject.instance().layerLoaded.connect(self.loadGDriveLayers)
         QgsProject.instance().readProject.connect(self.loadGDriveLayers)
 
@@ -262,6 +245,7 @@ class Google_Drive_Provider:
         # remove the toolbar
         del self.toolbar
         self.iface.legendInterface().removeLegendLayerAction(self.dup_to_google_drive_action)
+        self.remove_GooGIS_layers()
 
     def GooGISLayers(self):
         for layer in QgsMapLayerRegistry.instance().mapLayers().values():
@@ -278,6 +262,8 @@ class Google_Drive_Provider:
         for layer in self.GooGISLayers():
             google_id = layer.customProperty("googleDriveId", defaultValue=None)
             if google_id:
+                if not self.client_id or not self.myDrive:
+                    self.updateAccountAction()
                 self.gdrive_layer = GoogleDriveLayer(self, self.authorization, layer.name(), spreadsheet_id=google_id, loading_layer=layer)
                 print "reading", google_id, layer.id(), self.gdrive_layer.lyr.id()
                 #glayer.makeConnections(layer)
@@ -336,7 +322,7 @@ class Google_Drive_Provider:
             print "CRS", gsheet.crs()
             print "NEW_FID", gsheet.new_fid()
             print "DELETED FIELD 5", gsheet.mark_field_as_deleted(5)
-            print glayer.service_drive.trash_spreadsheet(glayer.get_gdrive_id())
+            print glayer.service_drive.trash_file(glayer.get_gdrive_id())
         print "TEST ENDED"
 
     def load_available_sheets(self):
@@ -349,47 +335,345 @@ class Google_Drive_Provider:
 
     def refresh_available(self):
         available_list_filepath = os.path.join(self.plugin_dir,'credentials','available_sheets.json')
-        self.available_sheets = self.myDrive.list_files()
+        try:
+            self.available_sheets = self.myDrive.list_files(orderBy=self.dlg.orderByCombo.itemData(self.dlg.orderByCombo.currentIndex()))
+        except:
+            self.myDrive.configure_service()
+            self.available_sheets = self.myDrive.list_files(orderBy=self.dlg.orderByCombo.itemData(self.dlg.orderByCombo.currentIndex()))
+        '''
+        shared_sheets = self.myDrive.list_files(orderBy=self.dlg.orderByCombo.itemData(self.dlg.orderByCombo.currentIndex()), shared = True)
+        anyone_sheets = self.myDrive.list_files(orderBy=self.dlg.orderByCombo.itemData(self.dlg.orderByCombo.currentIndex()), anyone = True)
         #print self.available_sheets
         with io.open(available_list_filepath, 'w', encoding='utf-8') as available_file:
             available_file.write(unicode(json.dumps(self.available_sheets, ensure_ascii=False)))
+        '''
+        try:
+            self.dlg.listWidget.currentItemChanged.disconnect(self.viewMetadata)
+        except:
+            pass
         self.dlg.listWidget.clear()
-        self.dlg.listWidget.addItems(self.available_sheets.keys())
+        #self.dlg.listWidget.setIconSize(QSize(100,100))
+        #self.dlg.infoTextBox.clear()
+        self.dlg.writeListTextBox.clear()
+        self.dlg.readListTextBox.clear()
+        #self.dlg.listWidget.addItems(self.available_sheets.keys())
+        sharedIcon = QIcon(os.path.join(self.plugin_dir,'shared.png'))
+        anyoneIcon = QIcon(os.path.join(self.plugin_dir,'globe.png'))
+        nullIcon = QIcon(os.path.join(self.plugin_dir,'null.png'))
+        for sheet_name, sheet_metadata in self.available_sheets.iteritems():
+            newItem = QListWidgetItem(QIcon(),sheet_name,self.dlg.listWidget, QListWidgetItem.UserType)
+            if not sheet_metadata["capabilities"]["canEdit"]:
+                font = newItem.font()
+                font.setItalic(True)
+                newItem.setFont(font)
+            #if sheet in shared_sheets.keys():
+            permissions = self.get_permissions(sheet_metadata)
+            if 'anyone' in permissions:
+                newItem.setIcon(anyoneIcon)
+            elif permissions != {}:
+                newItem.setIcon(sharedIcon)
+            else:
+                newItem.setIcon(nullIcon)
+            #newItem.setIcon(QIcon(os.path.join(self.plugin_dir,'shared.png')))
+            #newItem.setText(sheet)
+            self.dlg.listWidget.addItem(newItem)
+        self.dlg.listWidget.currentItemChanged.connect(self.viewMetadata)
+
+    def get_permissions(self,metadata):
+        permissions = {}
+        if 'permissions' in metadata:
+            for permission in metadata['permissions']:
+                if permission['type'] == 'anyone':
+                    permissions['anyone'] = permission['role']
+                if permission['type'] == 'user' and permission['emailAddress'] != self.client_id:
+                    permissions[permission['emailAddress']] = permission['role']
+        return permissions
+
+    def viewMetadata(self,item,prev):
+        self.dlg.anyoneCanRead.setChecked(False)
+        self.dlg.anyoneCanWrite.setChecked(False)
+        current_spreadsheet_id =  self.available_sheets[item.text()]['id']
+        self.current_metadata = self.available_sheets[item.text()]#self.myDrive.getFileMetadata(current_spreadsheet_id)
+        #self.dlg.infoTextBox.clear()
+
+        page = '''
+<html>
+<head>
+<style>
+.fieldrow {
+    font-family: "%s";
+    font-size: %spt;
+    text-shadow: 2px 2px #FFF, -2px 2px #FFF, 2px -2px #FFF, -2px -2px #FFF;
+}
+.fieldname{
+    font-weight: bold;
+}
+body {
+    background-image: url("%s");
+    -webkit-background-size: cover;
+}
+</style>
+</head>
+<body>
+<table width="330px" >
+%s
+</table>
+</body>
+</html>
+        '''
+        table_content = '''
+        '''
+        for row in ['owner', 'name', 'id', 'modifiedTime', 'createdTime', 'version', 'capability']:
+            table_content += '''
+    <tr>
+        <td><p class="fieldname fieldrow">%s</p></td>
+    </tr>
+    <tr>
+        <td><p class="fieldrow">{%s}</p></td>
+    </tr>
+            ''' % (row,row)
+
+        thumbnail_rif = self.myDrive.list_files(mimeTypeFilter='image/png', filename=item.text()+'.png' )
+        if thumbnail_rif:
+            web_link = 'https://drive.google.com/uc?export=view&id='+ thumbnail_rif[item.text()+'.png']['id']
+            print "web_link",web_link
+            #self.dlg.infoTextBox.setStyleSheet('background-image: url(%s)' % web_link)
+        else:
+            web_link = ''
+
+        owners = [owner["emailAddress"] for owner in self.current_metadata['owners']]
+        owners = " ".join(owners)
+
+        if self.current_metadata['capabilities']['canEdit']:
+            writeCapability = "editable file"
+        else:
+            writeCapability = "read-only file"
+
+        table_content = table_content.format(owner=owners, capability=writeCapability, **self.current_metadata)
+        page = page % (self.dlg.textEdit_sample.font().rawName(),self.dlg.textEdit_sample.font().pointSize(),web_link,table_content)
+        self.dlg.infoTextBox.page().currentFrame().setHtml(page)
+
+        print "stylesheet", self.dlg.textEdit_sample.font().pixelSize(), self.dlg.textEdit_sample.font().rawName()
+
+        permission_groups = [
+            self.dlg.readListGroupBox,
+            self.dlg.writeListGroupBox,
+        ]
+        for group in permission_groups:
+            if self.client_id in owners:
+                group.setEnabled(True)
+            else:
+                group.setEnabled(False)
+
+        self.original_write_list = []
+        self.original_read_list = []
+        if not 'permissions' in self.current_metadata:
+            return
+        for permission in self.current_metadata['permissions']:
+            if permission['role'] == 'writer':
+                if permission['type'] == 'anyone':
+                    #self.original_write_list.append('anyone')
+                    self.dlg.anyoneCanWrite.setChecked(True)
+                else:
+                    self.original_write_list.append(permission['emailAddress'])
+            if permission['role'] == 'reader':
+                if permission['type'] == 'anyone':
+                    #self.original_read_list.append('anyone')
+                    self.dlg.anyoneCanRead.setChecked(True)
+                else:
+                    self.original_read_list.append(permission['emailAddress'])
+
+        self.dlg.writeListTextBox.clear()
+        self.dlg.writeListTextBox.appendPlainText(' '.join(self.original_write_list))
+
+        self.dlg.readListTextBox.clear()
+        self.dlg.readListTextBox.appendPlainText(' '.join(self.original_read_list))
+
+    def ex_viewMetadata(self,item,prev):
+        self.dlg.anyoneCanRead.setChecked(False)
+        self.dlg.anyoneCanWrite.setChecked(False)
+        current_spreadsheet_id =  self.available_sheets[item.text()]['id']
+        self.current_metadata = self.available_sheets[item.text()]#self.myDrive.getFileMetadata(current_spreadsheet_id)
+        #self.dlg.infoTextBox.clear()
+        page = ''
+        thumbnail_rif = self.myDrive.list_files(mimeTypeFilter='image/png', filename=item.text()+'.png' )
+        if thumbnail_rif:
+            web_link = 'https://drive.google.com/uc?export=view&id='+ thumbnail_rif[item.text()+'.png']['id']
+            print "web_link",web_link
+            self.dlg.infoTextBox.setStyleSheet('background-image: url(%s)' % web_link)
+        else:
+            web_link = ''
+        self.dlg.infoTextBox.append('<table><tr style="width:100%;" >')
+
+        owners = [owner["emailAddress"] for owner in self.current_metadata['owners']]
+        permission_groups = [
+            self.dlg.readListGroupBox,
+            self.dlg.writeListGroupBox,
+        ]
+        for group in permission_groups:
+            if self.client_id in owners:
+                group.setEnabled(True)
+            else:
+                group.setEnabled(False)
+
+        self.dlg.infoTextBox.append('<td style="background-color: #eeeeee;"><strong>owners</strong></td>')
+        self.dlg.infoTextBox.append('<td>{}</td>'.format(" ".join(owners)))
+
+        for row in ['name', 'id', 'modifiedTime', 'createdTime', 'version']:
+            self.dlg.infoTextBox.append('<td style="background-color: #eeeeee;"><strong>{}</strong></td>'.format(row))
+            self.dlg.infoTextBox.append('<td>{}</td>'.format( self.current_metadata[row]))
+        if self.current_metadata['capabilities']['canEdit']:
+            writeCapability = "editable file"
+        else:
+            writeCapability = "read-only file"
+        self.dlg.infoTextBox.append('<td style="background-color: #eeeeee;"><strong>capabilities</strong></td>')
+        self.dlg.infoTextBox.append('<td>{}</td>'.format(writeCapability))
+        self.dlg.infoTextBox.append('<td><img src="{}" /></td>'.format(web_link))
+
+        #self.dlg.infoTextBox.append('</tr></table>')
+        #self.dlg.infoTextBox.append(json.dumps(self.current_metadata, indent=3))
+
+        self.original_write_list = []
+        self.original_read_list = []
+        if not 'permissions' in self.current_metadata:
+            return
+        for permission in self.current_metadata['permissions']:
+            if permission['role'] == 'writer':
+                if permission['type'] == 'anyone':
+                    #self.original_write_list.append('anyone')
+                    self.dlg.anyoneCanWrite.setChecked(True)
+                else:
+                    self.original_write_list.append(permission['emailAddress'])
+            if permission['role'] == 'reader':
+                if permission['type'] == 'anyone':
+                    #self.original_read_list.append('anyone')
+                    self.dlg.anyoneCanRead.setChecked(True)
+                else:
+                    self.original_read_list.append(permission['emailAddress'])
+
+        self.dlg.writeListTextBox.clear()
+        self.dlg.writeListTextBox.appendPlainText(' '.join(self.original_write_list))
+
+        self.dlg.readListTextBox.clear()
+        self.dlg.readListTextBox.appendPlainText(' '.join(self.original_read_list))
+
+
+    def anyoneCanWriteAction(self,state):
+        if self.dlg.anyoneCanWrite.isChecked():
+            self.dlg.writeListTextBox.setDisabled(True)
+        else:
+            self.dlg.writeListTextBox.setDisabled(False)
+
+    def anyoneCanReadAction(self,state):
+        if self.dlg.anyoneCanRead.isChecked():
+            self.dlg.readListTextBox.setDisabled(True)
+        else:
+            self.dlg.readListTextBox.setDisabled(False)
+
+    def updateReadWriteListAction(self):
+        try:
+            current_spreadsheet_id = self.current_metadata['id']
+        except:
+            return
+
+        rw_commander = collections.OrderedDict()
+        rw_commander["reader"] = {
+            "text_widget": self.dlg.readListTextBox,
+            "check_anyone_widget": self.dlg.anyoneCanRead,
+            "original_list": self.original_read_list
+        }
+        rw_commander["writer"] = {
+            "text_widget": self.dlg.writeListTextBox,
+            "check_anyone_widget": self.dlg.anyoneCanWrite,
+            "original_list": self.original_write_list
+        }
+
+        for role, widgets in rw_commander.iteritems():
+            cleaned_update_list = []
+            for permission in widgets['text_widget'].toPlainText().split(' '):
+                if re.match("([^@|\s]+@[^@]+\.[^@|\s]+)", permission):
+                    cleaned_update_list.append(permission)
+            if widgets['check_anyone_widget'].isChecked():
+                if not 'anyone' in cleaned_update_list:
+                    cleaned_update_list.append('anyone')
+            print "ROLE", role,"PERMISSIONS", widgets['original_list'], cleaned_update_list
+            delete_from_rw_list = list(set(widgets['original_list']) - set(cleaned_update_list))
+            add_to_rw_list = list(set(cleaned_update_list) - set(widgets['original_list']))
+            if 'permissions' in self.current_metadata:
+                for permission in self.current_metadata['permissions']:
+                    print permission
+                    if permission['role'] == role:
+                        if (permission['type'] == 'anyone' and not widgets['check_anyone_widget'].isChecked()) or \
+                                ('emailAddress' in permission and permission['emailAddress'] in delete_from_rw_list):
+                            self.myDrive.remove_permission(current_spreadsheet_id, permission['id'])
+                for new_read_user in add_to_rw_list:
+                    self.myDrive.add_permission(current_spreadsheet_id, new_read_user,role)
+
+    def updateAccountAction(self, error=None):
+        result = accountDialog.get_new_account(self.client_id, error=error)
+        if result:
+            self.authorization = google_authorization(self, SCOPES, os.path.join(self.plugin_dir, 'credentials'),
+                                                      APPLICATION_NAME, result)
+            print "self.authorization", self.authorization
+            self.myDrive = service_drive(self.authorization)
+            print "self.myDrive", self.myDrive
+            if not self.myDrive:
+                self.updateAccountAction(self, error=True)
+            if result != self.client_id:
+                self.client_id = result
+                s = QSettings()
+                s.setValue("GooGIS/gdrive_account", self.client_id)
+                self.remove_GooGIS_layers()
+                self.run()
+
+
+    def exportToGDriveAction(self):
+        layer = comboDialog.select(QgsMapLayerRegistry.instance().mapLayers(), self.iface.legendInterface().currentLayer())
+        print layer
+        self.dup_to_google_drive(layer)
+
+    def importByIdAction(self):
+        import_id = importFromIdDialog.getNewId()
+        if import_id:
+            import_id = import_id.strip()
+            if import_id[0:4] == 'http':
+                import_id = import_id.split('id=')[-1]
+            try:
+                response = self.myDrive.service.files().update(fileId=import_id, addParents='root').execute()
+                self.refresh_available()
+            except Exception, e:
+                logger("exception %s; can't open fileid %s" % (str(e),import_id))
+                pass
+            '''
+            public_file = self.myDrive.service.files().get(fileId=import_id).execute()
+            try:
+                self.gdrive_layer = GoogleDriveLayer(self, self.authorization, public_file['name'], spreadsheet_id=public_file['id'])
+            except:
+                print "invalid id"
+                pass
+            '''
+
+    def remove_GooGIS_layers(self):
+        for layer_id,layer in QgsMapLayerRegistry.instance().mapLayers().iteritems():
+            print layer_id, hasattr(layer, 'gDriveInterface')
+            if hasattr(layer, 'gDriveInterface'):
+                QgsMapLayerRegistry.instance().removeMapLayer(layer.id())
 
     def run(self):
         """Run method that performs all the real work"""
         # show the dialog
-        
-        self.myDrive = service_drive(self.authorization)
+
+        if not self.client_id or not self.myDrive:
+            self.updateAccountAction()
         self.refresh_available()
-        '''
-        self.available_sheets = self.myDrive.list_files()
-        self.available_sheets = {
-            'TEST1 DELIMITAZIONI': {'id':'1aSI0qrC_mDrkffWK-crxtHugX5TqkjeASv_paovmKpA'},
-            'TEST2 PUA': {'id':'1zwXxp6xMMzSYgbgFpryooF2PY5KWmnsXc0muCESXhQA'},
-            'TEST3 strutVendita': {'id':'1TenhNLcCOJzunqLF2kvlJ3lCdxkJvSyhYqEnWc6pS28'},
-            'TEST2 infra': {'id':'1AnGkUVXzNWt0k9850QvkDjtwoKdrntxe2t1aU7_G4tM'},
-        }
-        '''
-        self.dlg.listWidget.clear()
-        self.dlg.listWidget.addItems(self.available_sheets.keys())
-        #self.myDrive.create_googis_sheet_from_csv("/home/enrico/Scrivania/temp9.csv")
 
         self.dlg.show()
+        self.dlg.raise_()
         # Run the dialog event loop
         result = self.dlg.exec_()
         # See if OK was pressed
         if result and self.dlg.listWidget.selectedItems():
             self.load_sheet(self.dlg.listWidget.selectedItems()[0])
-
-
-            # Make connections
-            #self.lyr.editingStarted.connect(self.editing_started)
-            #self.lyr.editingStopped.connect(self.editing_stopped)
-            #self.lyr.committedAttributeValuesChanges.connect(self.attributes_changed)
-            #self.lyr.committedFeaturesAdded.connect(self.features_added)
-            #self.lyr.committedFeaturesRemoved.connect(self.features_removed)
-            #self.lyr.geometryChanged.connect(self.geometry_changed)
 
     def load_sheet(self,item):
         sheet_name = item.text()
@@ -397,110 +681,14 @@ class Google_Drive_Provider:
         print sheet_id
         self.gdrive_layer = GoogleDriveLayer(self, self.authorization, sheet_name, spreadsheet_id=sheet_id)
 
-    def dup_to_google_drive(self):
-        currentLayer = self.iface.legendInterface().currentLayer()
-        print currentLayer.name()
-        self.gdrive_layer = GoogleDriveLayer(self, self.authorization, currentLayer.name(), importing_layer=currentLayer)
+    def dup_to_google_drive(self, layer = None):
+        if not layer:
+            layer = self.iface.legendInterface().currentLayer()
+        self.gdrive_layer = GoogleDriveLayer(self, self.authorization, layer.name(), importing_layer=layer)
         #update available list without refreshing
         try:
-            self.available_sheets[currentLayer.name()] = self.gdrive_layer.spreadsheet_id
+            self.available_sheets[layer.name()] = self.gdrive_layer.spreadsheet_id
             self.dlg.listWidget.clear()
             self.dlg.listWidget.addItems(self.available_sheets.keys())
         except:
             pass
-        
-
-    def dum(self):
-
-        '''
-        s = QSettings() #getting proxy from qgis options settings
-        token = s.value("Google_API_access_token", "")
-        print "STORED TOKEN:",token
-
-        #credentials = client.AccessTokenCredentials(token,'qt4-user-agent/1.0',None)
-        #credentials = client.GoogleCredentials(token,
-                                               'enricofer@gmail.com',
-                                               'cdgsfo',
-                                               None,
-                                               None,
-                                               GOOGLE_TOKEN_URI,
-                                               'pyqt4-user-agent/1.0',
-                                               revoke_uri = None)
-        #print "SCOPES",credentials.retrieve_scopes(httpConnection)
-
-        try:
-            print "SCOPES",credentials.retrieve_scopes(httpConnection)
-        except:
-            print "TOKEN INVALID: asking new credentials"
-            token = self.get_credentials()
-            print "NEW TOKEN:",token
-            credentials = client.AccessTokenCredentials(token,'qt4-user-agent/1.0',None)
-            s.setValue("Google_API_access_token", token)
-
-        if credentials.access_token_expired:
-            print "TOKEN EXPIRED: refreshing"
-            credentials.refresh(http)
-        elif token == '' or credentials is None or credentials.invalid:
-            print "TOKEN INVALID: asking new credentials"
-            token = self.get_credentials()
-            print "NEW TOKEN:",token
-            credentials = client.AccessTokenCredentials(token,'qt4-user-agent/1.0',None)
-            s.setValue("Google_API_access_token", token)
-        else:
-            print "access token ok:",credentials.to_json()
-            #print credentials.retrieve_scopes(httpConnection)
-        '''
-
-        media_body = MediaFileUpload(csv_path, mimetype='text/csv', resumable=None)
-        body = {
-            'name': os.path.basename(csv_path),
-            'description': 'GooGIS sheet',
-            'mimeType': 'application/vnd.google-apps.spreadsheet'
-        }
-        file = service_drive.files().create(body=body, media_body=media_body).execute()
-        print file
-
-        #gs = Sheets.from_files(os.path.join(os.path.dirname(__file__), 'credentials','sheets.googleapis.com-python-quickstart.json'))
-        #print gs
-        #tab = gs[file['id']]
-        #print tab
-
-        list = service_sheets.spreadsheets().values().get(spreadsheetId=file['id'], range='B2:B', valueRenderOption = 'UNFORMATTED_VALUE').execute()
-        print list
-
-        sheet_metadata = service_sheets.spreadsheets().get(spreadsheetId=file['id']).execute()
-        print sheet_metadata
-        update_body = {
-            "requests": [{
-                "findReplace": {
-                               # Finds and replaces data in cells over a range, sheet, or all sheets. # Finds and replaces occurrences of some text with other text.
-                                   #"includeFormulas": True or False,
-                               # True if the search should include cells with formulas.
-                                   # False to skip cells with formulas.
-                                   "matchEntireCell": True, #True or False,  # True if the find value should match the entire cell.
-                                   "allSheets": None,  # True to find/replace over all sheets.
-                                   #"matchCase": True or False,  # True if the search is case sensitive.
-                                   "find": '8',  # The value to search.
-                                   "range": {
-                                        "sheetId": sheet_metadata['sheets'][0]['properties']['sheetId'], # The sheet this range is on.
-                                        "startRowIndex": 1, # The start row (inclusive) of the range, or not set if unbounded.
-                                        #"endRowIndex": 42, # The end row (exclusive) of the range, or not set if unbounded.
-                                        "startColumnIndex": 1, # The start column (inclusive) of the range, or not set if unbounded.
-                                        "endColumnIndex": 2, # The end column (exclusive) of the range, or not set if unbounded.
-                                    },
-                                   #"searchByRegex": None,  # True if the find value is a regex.
-                                   # The regular expression and replacement should follow Java regex rules
-                                   # at https://docs.oracle.com/javase/8/docs/api/java/util/regex/Pattern.html.
-                                   # The replacement string is allowed to refer to capturing groups.
-                                   # For example, if one cell has the contents `"Google Sheets"` and another
-                                   # has `"Google Docs"`, then searching for `"o.* (.*)"` with a replacement of
-                                   # `"$1 Rocks"` would change the contents of the cells to
-                                   # `"GSheets Rocks"` and `"GDocs Rocks"` respectively.
-                                   #"sheetId": 42,  # The sheet to find/replace over.
-                                   #"replacement": '8',  # The value to use as the replacement.
-                               }
-            }]
-        }
-
-        find = service_sheets.spreadsheets().batchUpdate(spreadsheetId=file['id'],body=update_body).execute()
-        print find

@@ -6,42 +6,34 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>755</width>
-    <height>603</height>
+    <width>658</width>
+    <height>563</height>
    </rect>
   </property>
   <property name="windowTitle">
-   <string>GooGIS</string>
+   <string>CSV Provider</string>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout_4">
    <item>
     <layout class="QHBoxLayout" name="horizontalLayout_3">
      <item>
-      <widget class="QPushButton" name="refreshButton">
-       <property name="minimumSize">
-        <size>
-         <width>0</width>
-         <height>25</height>
-        </size>
-       </property>
+      <widget class="QPushButton" name="orderByNameButton">
        <property name="text">
-        <string>refresh</string>
+        <string>order by name</string>
        </property>
       </widget>
      </item>
      <item>
-      <widget class="QComboBox" name="orderByCombo">
-       <property name="sizePolicy">
-        <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
-         <horstretch>0</horstretch>
-         <verstretch>0</verstretch>
-        </sizepolicy>
+      <widget class="QPushButton" name="orderByModTime">
+       <property name="text">
+        <string>order by mod time</string>
        </property>
-       <property name="minimumSize">
-        <size>
-         <width>150</width>
-         <height>23</height>
-        </size>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="refreshButton">
+       <property name="text">
+        <string>Refresh</string>
        </property>
       </widget>
      </item>
@@ -59,15 +51,9 @@
       </spacer>
      </item>
      <item>
-      <widget class="QPushButton" name="accountButton">
-       <property name="minimumSize">
-        <size>
-         <width>0</width>
-         <height>25</height>
-        </size>
-       </property>
+      <widget class="QPushButton" name="settingsButton">
        <property name="text">
-        <string>account</string>
+        <string>settings</string>
        </property>
       </widget>
      </item>
@@ -80,35 +66,11 @@
      </item>
      <item>
       <layout class="QVBoxLayout" name="verticalLayout">
-       <property name="spacing">
-        <number>3</number>
-       </property>
        <item>
-        <widget class="QTextEdit" name="textEdit_sample"/>
+        <widget class="QTextEdit" name="infoTextBox"/>
        </item>
        <item>
-        <widget class="QWebView" name="infoTextBox">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Maximum" vsizetype="Preferred">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
-         </property>
-         <property name="maximumSize">
-          <size>
-           <width>362</width>
-           <height>16777215</height>
-          </size>
-         </property>
-         <property name="url">
-          <url>
-           <string>about:blank</string>
-          </url>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QGroupBox" name="writeListGroupBox">
+        <widget class="QGroupBox" name="groupBox">
          <property name="sizePolicy">
           <sizepolicy hsizetype="Preferred" vsizetype="Maximum">
            <horstretch>0</horstretch>
@@ -122,28 +84,16 @@
           </size>
          </property>
          <property name="title">
-          <string>read/write list</string>
+          <string>write list</string>
          </property>
          <property name="flat">
-          <bool>true</bool>
-         </property>
-         <property name="checkable">
           <bool>false</bool>
          </property>
          <layout class="QHBoxLayout" name="horizontalLayout_7">
           <property name="spacing">
            <number>0</number>
           </property>
-          <property name="leftMargin">
-           <number>0</number>
-          </property>
-          <property name="topMargin">
-           <number>6</number>
-          </property>
-          <property name="rightMargin">
-           <number>0</number>
-          </property>
-          <property name="bottomMargin">
+          <property name="margin">
            <number>0</number>
           </property>
           <item>
@@ -153,13 +103,6 @@
             </item>
             <item>
              <layout class="QHBoxLayout" name="horizontalLayout_8">
-              <item>
-               <widget class="QCheckBox" name="anyoneCanWrite">
-                <property name="text">
-                 <string>anyone can read/write</string>
-                </property>
-               </widget>
-              </item>
               <item>
                <spacer name="horizontalSpacer_5">
                 <property name="orientation">
@@ -188,14 +131,7 @@
         </widget>
        </item>
        <item>
-        <widget class="Line" name="line_2">
-         <property name="orientation">
-          <enum>Qt::Horizontal</enum>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QGroupBox" name="readListGroupBox">
+        <widget class="QGroupBox" name="groupBox_3">
          <property name="sizePolicy">
           <sizepolicy hsizetype="Preferred" vsizetype="Maximum">
            <horstretch>0</horstretch>
@@ -212,31 +148,15 @@
           <string>read list</string>
          </property>
          <property name="flat">
-          <bool>true</bool>
+          <bool>false</bool>
          </property>
          <layout class="QHBoxLayout" name="horizontalLayout_9">
           <property name="spacing">
            <number>0</number>
           </property>
-          <property name="leftMargin">
+          <property name="margin">
            <number>0</number>
           </property>
-          <property name="topMargin">
-           <number>6</number>
-          </property>
-          <property name="rightMargin">
-           <number>0</number>
-          </property>
-          <property name="bottomMargin">
-           <number>0</number>
-          </property>
-          <item>
-           <widget class="Line" name="line">
-            <property name="orientation">
-             <enum>Qt::Horizontal</enum>
-            </property>
-           </widget>
-          </item>
           <item>
            <layout class="QVBoxLayout" name="verticalLayout_3">
             <item>
@@ -244,13 +164,6 @@
             </item>
             <item>
              <layout class="QHBoxLayout" name="horizontalLayout_4">
-              <item>
-               <widget class="QCheckBox" name="anyoneCanRead">
-                <property name="text">
-                 <string>anyone can read</string>
-                </property>
-               </widget>
-              </item>
               <item>
                <spacer name="horizontalSpacer_4">
                 <property name="orientation">
@@ -267,7 +180,7 @@
               <item>
                <widget class="QPushButton" name="updateReadListButton">
                 <property name="text">
-                 <string>update permissions</string>
+                 <string>update</string>
                 </property>
                </widget>
               </item>
@@ -276,13 +189,6 @@
            </layout>
           </item>
          </layout>
-        </widget>
-       </item>
-       <item>
-        <widget class="Line" name="line_3">
-         <property name="orientation">
-          <enum>Qt::Horizontal</enum>
-         </property>
         </widget>
        </item>
       </layout>
@@ -332,13 +238,6 @@
    </item>
   </layout>
  </widget>
- <customwidgets>
-  <customwidget>
-   <class>QWebView</class>
-   <extends>QWidget</extends>
-   <header>QtWebKit/QWebView</header>
-  </customwidget>
- </customwidgets>
  <resources/>
  <connections>
   <connection>

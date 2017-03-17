@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """
 /***************************************************************************
- CSVProvider
                                  A QGIS plugin
- Example of "faking" a data provider with PyQGIS
-                             -------------------
+ A plugin for using Google drive sheets as QGIS layer shared between concurrent users
+ portions of code are from https://github.com/g-sherman/pseudo_csv_provider
+                              -------------------
         begin                : 2015-03-13
-        copyright            : (C) 2015 by GeoApt LLC
-        email                : gsherman@geoapt.com
         git sha              : $Format:%H$
+        copyright            : (C)2017 Enrico Ferreguti (C)2015 by GeoApt LLC gsherman@geoapt.com
+        email                : enricofer@gmail.com
  ***************************************************************************/
 
 /***************************************************************************
@@ -19,16 +19,11 @@
  *   (at your option) any later version.                                   *
  *                                                                         *
  ***************************************************************************/
- This script initializes the plugin, making it known to QGIS.
 """
 import os 
 import site
-import sys
 
 site.addsitedir(os.path.join(os.path.dirname(__file__),'extlibs'))
-#global sys.argv
-#sys.argv = [""]
-#print sys.modules['rsa'] = None
 
 # noinspection PyPep8Naming
 def classFactory(iface):  # pylint: disable=invalid-name
