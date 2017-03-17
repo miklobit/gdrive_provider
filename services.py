@@ -189,7 +189,7 @@ class service_drive:
             self.list_files()
         except:
             print "renew authorization"
-            self.service_sheet.get_service()
+            self.service.configure_service()
 
     def list_files(self, mimeTypeFilter = 'application/vnd.google-apps.spreadsheet', shared=None, anyone=None, test=None, orderBy='modifiedTime desc', filename=None):
         '''

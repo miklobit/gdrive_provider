@@ -404,10 +404,13 @@ class Google_Drive_Provider:
 .fieldrow {
     font-family: "%s";
     font-size: %spt;
-    text-shadow: 2px 2px #FFF, -2px 2px #FFF, 2px -2px #FFF, -2px -2px #FFF;
+    /*text-shadow: 2px 2px #FFF, -2px 2px #FFF, 2px -2px #FFF, -2px -2px #FFF;*/
 }
 .fieldname{
     font-weight: bold;
+}
+.mask{
+    background-color: #FFF;
 }
 body {
     background-image: url("%s");
@@ -427,10 +430,10 @@ body {
         for row in ['owner', 'name', 'id', 'modifiedTime', 'createdTime', 'version', 'capability']:
             table_content += '''
     <tr>
-        <td><p class="fieldname fieldrow">%s</p></td>
+        <td><p class="fieldname fieldrow"><span class="mask">%s</snap></p></td>
     </tr>
     <tr>
-        <td><p class="fieldrow">{%s}</p></td>
+        <td><p class="fieldrow"><span class="mask">{%s}</snap></p></td>
     </tr>
             ''' % (row,row)
 
@@ -678,7 +681,7 @@ body {
 
     def load_sheet(self,item):
         sheet_name = item.text()
-        sheet_id = self.available_sheets[sheet_name]
+        sheet_id = self.available_sheets[sheet_name]['id']
         print sheet_id
         self.gdrive_layer = GoogleDriveLayer(self, self.authorization, sheet_name, spreadsheet_id=sheet_id)
 
@@ -688,7 +691,7 @@ body {
         self.gdrive_layer = GoogleDriveLayer(self, self.authorization, layer.name(), importing_layer=layer)
         #update available list without refreshing
         try:
-            self.available_sheets[layer.name()] = self.gdrive_layer.spreadsheet_id
+            self.available_sheets[layer.name()]['id'] = self.gdrive_layer.spreadsheet_id
             self.dlg.listWidget.clear()
             self.dlg.listWidget.addItems(self.available_sheets.keys())
         except:
