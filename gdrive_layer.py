@@ -203,11 +203,7 @@ class GoogleDriveLayer(QObject):
         '''
         when connection stay alive too long we have to rebuild service
         '''
-        try:
-            self.service_sheet.sheet_cell("A1")
-        except:
-            print "renew authorization"
-            self.service_sheet.get_service()
+        self.service_drive.renew_connection()
 
 
     def update_from_subscription(self):

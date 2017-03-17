@@ -390,6 +390,7 @@ class Google_Drive_Provider:
         return permissions
 
     def viewMetadata(self,item,prev):
+        self.myDrive.renew_connection()
         self.dlg.anyoneCanRead.setChecked(False)
         self.dlg.anyoneCanWrite.setChecked(False)
         current_spreadsheet_id =  self.available_sheets[item.text()]['id']

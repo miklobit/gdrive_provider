@@ -181,6 +181,16 @@ class service_drive:
     def isGooGisSheet(self,fileId):
         return 'description' in self.getFileMetadata(fileId).keys() and 'GOOGIS' in self.getFileMetadata(fileId)['description'].upper()
 
+    def renew_connection(self):
+        '''
+        when connection stay alive too long we have to rebuild service
+        '''
+        try:
+            self.list_files()
+        except:
+            print "renew authorization"
+            self.service_sheet.get_service()
+
     def list_files(self, mimeTypeFilter = 'application/vnd.google-apps.spreadsheet', shared=None, anyone=None, test=None, orderBy='modifiedTime desc', filename=None):
         '''
         A method to list GooGIS application files in client_id drive specifying sorting
