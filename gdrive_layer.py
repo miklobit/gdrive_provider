@@ -737,9 +737,9 @@ class GoogleDriveLayer(QObject):
         image.save(tmp_path,"PNG")
         image_istances = self.service_drive.list_files(mimeTypeFilter='image/png',filename=self.service_sheet.name+".png")
         print image_istances
-        for imagename, image_prop in image_istances.iteritems():
-            print imagename, image_prop
-            self.service_drive.delete_file(image_prop)
+        for imagename, image_props in image_istances.iteritems():
+            print imagename, image_props['id']
+            self.service_drive.delete_file(image_props['id'])
         result = self.service_drive.upload_image(tmp_path)
         self.service_drive.add_permission(result['id'],'anyone','reader')
         webLink = 'https://drive.google.com/uc?export=view&id='+result['id']
@@ -759,7 +759,7 @@ class GoogleDriveLayer(QObject):
 
         #merge cells to visualize snapshot and aaply image snapshot
         request_body = {
-            'requests': {
+            'requests': [{
                 'mergeCells': {
                     "range": {
                         "sheetId": summary_id,
@@ -770,7 +770,7 @@ class GoogleDriveLayer(QObject):
                     },
                 "mergeType": 'MERGE_ALL'
                 }
-            }
+            }]
         }
         print "merge", self.service_sheet.service.spreadsheets().batchUpdate(spreadsheetId=self.spreadsheet_id, body=request_body).execute()
         print "image", self.service_sheet.set_sheet_cell('summary!A10','=IMAGE("%s",3)' % webLink)

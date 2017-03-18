@@ -189,7 +189,7 @@ class service_drive:
             self.list_files()
         except:
             print "renew authorization"
-            self.service.configure_service()
+            self.configure_service()
 
     def list_files(self, mimeTypeFilter = 'application/vnd.google-apps.spreadsheet', shared=None, anyone=None, test=None, orderBy='modifiedTime desc', filename=None):
         '''
@@ -904,14 +904,13 @@ class service_spreadsheet:
                     "properties": {
                         "title": title,
                         "hidden": hidden,
+                        "gridProperties": {},
                     }
                 },
             }]
         }
         if no_grid:
-            update_body["requests"]["addSheet"]["properties"]["gridProperties"]={
-                "hideGridlines": True,
-            }
+            update_body["requests"][0]["addSheet"]["properties"]["gridProperties"]["hideGridlines"] = True
         result = self.service.spreadsheets().batchUpdate(spreadsheetId=self.spreadsheetId, body=update_body).execute()
         #print "add_child_sheet",result
         return result['replies'][0]['addSheet']['properties']['sheetId']
