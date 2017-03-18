@@ -334,29 +334,15 @@ class Google_Drive_Provider:
             self.refresh_available()
 
     def refresh_available(self):
-        available_list_filepath = os.path.join(self.plugin_dir,'credentials','available_sheets.json')
-        try:
-            self.available_sheets = self.myDrive.list_files(orderBy=self.dlg.orderByCombo.itemData(self.dlg.orderByCombo.currentIndex()))
-        except:
-            self.myDrive.configure_service()
-            self.available_sheets = self.myDrive.list_files(orderBy=self.dlg.orderByCombo.itemData(self.dlg.orderByCombo.currentIndex()))
-        '''
-        shared_sheets = self.myDrive.list_files(orderBy=self.dlg.orderByCombo.itemData(self.dlg.orderByCombo.currentIndex()), shared = True)
-        anyone_sheets = self.myDrive.list_files(orderBy=self.dlg.orderByCombo.itemData(self.dlg.orderByCombo.currentIndex()), anyone = True)
-        #print self.available_sheets
-        with io.open(available_list_filepath, 'w', encoding='utf-8') as available_file:
-            available_file.write(unicode(json.dumps(self.available_sheets, ensure_ascii=False)))
-        '''
+        self.myDrive.configure_service()
+        self.available_sheets = self.myDrive.list_files(orderBy=self.dlg.orderByCombo.itemData(self.dlg.orderByCombo.currentIndex()))
         try:
             self.dlg.listWidget.currentItemChanged.disconnect(self.viewMetadata)
         except:
             pass
         self.dlg.listWidget.clear()
-        #self.dlg.listWidget.setIconSize(QSize(100,100))
-        #self.dlg.infoTextBox.clear()
         self.dlg.writeListTextBox.clear()
         self.dlg.readListTextBox.clear()
-        #self.dlg.listWidget.addItems(self.available_sheets.keys())
         sharedIcon = QIcon(os.path.join(self.plugin_dir,'shared.png'))
         anyoneIcon = QIcon(os.path.join(self.plugin_dir,'globe.png'))
         nullIcon = QIcon(os.path.join(self.plugin_dir,'null.png'))
@@ -633,29 +619,19 @@ body {
 
     def exportToGDriveAction(self):
         layer = comboDialog.select(QgsMapLayerRegistry.instance().mapLayers(), self.iface.legendInterface().currentLayer())
-        print layer
         self.dup_to_google_drive(layer)
 
     def importByIdAction(self):
         import_id = importFromIdDialog.getNewId()
         if import_id:
             import_id = import_id.strip()
-            if import_id[0:4] == 'http':
-                import_id = import_id.split('id=')[-1]
+            self.myDrive.configure_service()
             try:
                 response = self.myDrive.service.files().update(fileId=import_id, addParents='root').execute()
                 self.refresh_available()
             except Exception, e:
                 logger("exception %s; can't open fileid %s" % (str(e),import_id))
                 pass
-            '''
-            public_file = self.myDrive.service.files().get(fileId=import_id).execute()
-            try:
-                self.gdrive_layer = GoogleDriveLayer(self, self.authorization, public_file['name'], spreadsheet_id=public_file['id'])
-            except:
-                print "invalid id"
-                pass
-            '''
 
     def remove_GooGIS_layers(self):
         for layer_id,layer in QgsMapLayerRegistry.instance().mapLayers().iteritems():
@@ -682,17 +658,12 @@ body {
     def load_sheet(self,item):
         sheet_name = item.text()
         sheet_id = self.available_sheets[sheet_name]['id']
-        print sheet_id
+        self.myDrive.configure_service()
         self.gdrive_layer = GoogleDriveLayer(self, self.authorization, sheet_name, spreadsheet_id=sheet_id)
 
     def dup_to_google_drive(self, layer = None):
         if not layer:
             layer = self.iface.legendInterface().currentLayer()
+        self.myDrive.configure_service()
         self.gdrive_layer = GoogleDriveLayer(self, self.authorization, layer.name(), importing_layer=layer)
-        #update available list without refreshing
-        try:
-            self.available_sheets[layer.name()]['id'] = self.gdrive_layer.spreadsheet_id
-            self.dlg.listWidget.clear()
-            self.dlg.listWidget.addItems(self.available_sheets.keys())
-        except:
-            pass
+        self.refresh_available()

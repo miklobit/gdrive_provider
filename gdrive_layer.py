@@ -139,6 +139,7 @@ class GoogleDriveLayer(QObject):
         #create summary if importing
         if importing_layer:
             self.update_summary_sheet()
+        self.lyr.gdrive_control = self
         bar.stop("Layer %s succesfully loaded" % layer_name)
 
     def makeConnections(self,lyr):
@@ -555,11 +556,13 @@ class GoogleDriveLayer(QObject):
 
     def unsubscribe(self):
         '''
-        When a read/write layer is removed from the legend the remote subscription sheet is removed
+        When a read/write layer is removed from the legend the remote subscription sheet is removed and update summary sheet if dirty
         :return:
         '''
         self.renew_connection()
         self.service_sheet.unsubscribe()
+        if self.dirty:
+            self.update_summary_sheet()
 
     def qgis_layer_to_csv(self,qgis_layer):
         '''
@@ -775,6 +778,16 @@ class GoogleDriveLayer(QObject):
         print "merge", self.service_sheet.service.spreadsheets().batchUpdate(spreadsheetId=self.spreadsheet_id, body=request_body).execute()
         print "image", self.service_sheet.set_sheet_cell('summary!A10','=IMAGE("%s",3)' % webLink)
 
+        permissions = self.service_drive.file_property(self.spreadsheet_id,'permissions')
+        for permission in permissions:
+            if permission['type'] == 'anyone':
+                public = True
+                break
+            else:
+                public = False
+        if public:
+            publicLink = "https://enricofer.github.io/GooGIS2CSV/converter.html?spreadsheet_id="+self.spreadsheet_id
+            print "public link", self.service_sheet.set_sheet_cell('summary!A9', publicLink)
         #hide worksheets except summary
         sheets = self.service_sheet.get_sheets()
         #self.service_sheet.toggle_sheet('summary', sheets['summary'], hidden=None)
@@ -783,21 +796,6 @@ class GoogleDriveLayer(QObject):
                 print sheet_name, sheet_id
                 self.service_sheet.toggle_sheet(sheet_name, sheet_id, hidden=True)
 
-        '''
-        request_body = {
-            'requests': {
-                'autoResizeDimensions': {
-                    "dimensions":{
-                        "sheetId": summary_id,
-                        "dimension": 'COLUMNS',
-                        "startIndex": 0,
-                        "endIndex": 1,
-                    }
-                }
-            }
-        }
-        print "resize2", self.service_sheet.service.spreadsheets().batchUpdate(spreadsheetId=self.spreadsheet_id, body=request_body).execute()
-        '''
 
 
 
