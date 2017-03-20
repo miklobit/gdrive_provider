@@ -180,7 +180,9 @@ class Google_Drive_Provider:
         return action
 
     def initGui(self):
-        """Create the menu entries and toolbar icons inside the QGIS GUI."""
+        """
+        Create the menu entries and toolbar icons inside the QGIS GUI.
+        """
         
         icon_path = os.path.join(self.plugin_dir,'icon.png')
         self.add_action(
@@ -235,7 +237,9 @@ class Google_Drive_Provider:
 
 
     def unload(self):
-        """Removes the plugin menu item and icon from QGIS GUI."""
+        """
+        Removes the plugin menu item and icon from QGIS GUI.
+        """
         QgsProject.instance().readProject.disconnect(self.loadGDriveLayers)
         for action in self.actions:
             self.iface.removePluginVectorMenu(
@@ -248,17 +252,30 @@ class Google_Drive_Provider:
         self.remove_GooGIS_layers()
 
     def GooGISLayers(self):
+        '''
+        iterator over QGIS layer associated to plugin
+        :return:
+        '''
         for layer in QgsMapLayerRegistry.instance().mapLayers().values():
             if self.isGooGISLayer(layer):
                 yield layer
 
     def isGooGISLayer(self, layer):
+        '''
+        Method to check if a QGIS layer is associated to plugin
+        :param layer:
+        :return: True or False
+        '''
         if layer.type() != QgsMapLayer.VectorLayer:
             return
         use = layer.customProperty("googleDriveId")
         return not (use == False)
 
     def loadGDriveLayers(self,dom):
+        '''
+        Landing method for readProject signal. Loads layer data from google drive with "googleDriveId" custom property
+        :param dom:
+        '''
         for layer in self.GooGISLayers():
             google_id = layer.customProperty("googleDriveId", defaultValue=None)
             if google_id:
@@ -326,6 +343,10 @@ class Google_Drive_Provider:
         print "TEST ENDED"
 
     def load_available_sheets(self):
+        '''
+        Method that loads from user google drive the available GooGIS layers list
+        :return:
+        '''
         bak_available_list_filepath = os.path.join(self.plugin_dir,'credentials','available_sheets.json')
         if os.path.exists(bak_available_list_filepath):
             with open(bak_available_list_filepath) as available_file:
@@ -334,6 +355,9 @@ class Google_Drive_Provider:
             self.refresh_available()
 
     def refresh_available(self):
+        '''
+        Method for refreshing dialog list widget with available GooGIS layers
+        '''
         self.myDrive.configure_service()
         self.available_sheets = self.myDrive.list_files(orderBy=self.dlg.orderByCombo.itemData(self.dlg.orderByCombo.currentIndex()))
         try:
@@ -366,6 +390,10 @@ class Google_Drive_Provider:
         self.dlg.listWidget.currentItemChanged.connect(self.viewMetadata)
 
     def get_permissions(self,metadata):
+        '''
+        returns a simplified list of permissions from the downloaded metadata
+        :param metadata: the downloaded file metadata
+        '''
         permissions = {}
         if 'permissions' in metadata:
             for permission in metadata['permissions']:
@@ -376,6 +404,11 @@ class Google_Drive_Provider:
         return permissions
 
     def viewMetadata(self,item,prev):
+        '''
+        Method for populating item details slots (metadata, thumbnail, permissions) on list widget selection
+        :param item: the selcted list widget item
+        :param prev: not used
+        '''
         self.myDrive.renew_connection()
         self.dlg.anyoneCanRead.setChecked(False)
         self.dlg.anyoneCanWrite.setChecked(False)
@@ -480,6 +513,9 @@ body {
         self.dlg.readListTextBox.appendPlainText(' '.join(self.original_read_list))
 
     def ex_viewMetadata(self,item,prev):
+        '''
+        original method, temporary leaved here
+        '''
         self.dlg.anyoneCanRead.setChecked(False)
         self.dlg.anyoneCanWrite.setChecked(False)
         current_spreadsheet_id =  self.available_sheets[item.text()]['id']
@@ -549,18 +585,29 @@ body {
 
 
     def anyoneCanWriteAction(self,state):
+        '''
+        Landing method for stateChanged signal. Sincronize list box with related checkbox checking
+        :param state: not used
+        '''
         if self.dlg.anyoneCanWrite.isChecked():
             self.dlg.writeListTextBox.setDisabled(True)
         else:
             self.dlg.writeListTextBox.setDisabled(False)
 
     def anyoneCanReadAction(self,state):
+        '''
+        Landing method for stateChanged signal. Sincronize list box with related checkbox checking
+        :param state: not used
+        '''
         if self.dlg.anyoneCanRead.isChecked():
             self.dlg.readListTextBox.setDisabled(True)
         else:
             self.dlg.readListTextBox.setDisabled(False)
 
     def updateReadWriteListAction(self):
+        '''
+        Method to sincronize read write boxes with current item metadata
+        '''
         try:
             current_spreadsheet_id = self.current_metadata['id']
         except:
@@ -600,6 +647,10 @@ body {
                     self.myDrive.add_permission(current_spreadsheet_id, new_read_user,role)
 
     def updateAccountAction(self, error=None):
+        '''
+        Method to update current google drive user
+        :param error:
+        '''
         result = accountDialog.get_new_account(self.client_id, error=error)
         if result:
             self.authorization = google_authorization(self, SCOPES, os.path.join(self.plugin_dir, 'credentials'),
@@ -618,10 +669,16 @@ body {
 
 
     def exportToGDriveAction(self):
+        '''
+        method to export a selected QGIS layer to Google drive (from dialog or layer contextual menu
+        '''
         layer = comboDialog.select(QgsMapLayerRegistry.instance().mapLayers(), self.iface.legendInterface().currentLayer())
         self.dup_to_google_drive(layer)
 
     def importByIdAction(self):
+        '''
+        Method to import to user google drive a public sheet giving its fileId
+        '''
         import_id = importFromIdDialog.getNewId()
         if import_id:
             import_id = import_id.strip()
@@ -634,14 +691,18 @@ body {
                 pass
 
     def remove_GooGIS_layers(self):
+        '''
+        Method to remove loaded GooGIS layer from legend and map canvas. Used uninstalling plugin
+        '''
         for layer_id,layer in QgsMapLayerRegistry.instance().mapLayers().iteritems():
             print layer_id, hasattr(layer, 'gDriveInterface')
             if hasattr(layer, 'gDriveInterface'):
                 QgsMapLayerRegistry.instance().removeMapLayer(layer.id())
 
     def run(self):
-        """Run method that performs all the real work"""
-        # show the dialog
+        """
+        show the plugin dialog
+        """
 
         if not self.client_id or not self.myDrive:
             self.updateAccountAction()
@@ -656,12 +717,22 @@ body {
             self.load_sheet(self.dlg.listWidget.selectedItems()[0])
 
     def load_sheet(self,item):
+        '''
+        Method for loading as QGIS layer the selected google drive layer
+        :param item:
+        :return:
+        '''
         sheet_name = item.text()
         sheet_id = self.available_sheets[sheet_name]['id']
         self.myDrive.configure_service()
         self.gdrive_layer = GoogleDriveLayer(self, self.authorization, sheet_name, spreadsheet_id=sheet_id)
 
     def dup_to_google_drive(self, layer = None):
+        '''
+        Method for duplicating a current QGIS layer to a Google drive sheet (AKA GooGIS layer)
+        :param layer:
+        :return:
+        '''
         if not layer:
             layer = self.iface.legendInterface().currentLayer()
         self.myDrive.configure_service()

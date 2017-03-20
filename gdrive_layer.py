@@ -34,7 +34,7 @@ from utils import slugify
 class progressBar:
     def __init__(self, parent, msg = ''):
         '''
-        instatiation methos to progressBar class. It creates a QgsMessageBar with provided msg and a working QProgressBar
+        progressBar class instatiation method. It creates a QgsMessageBar with provided msg and a working QProgressBar
         :param parent:
         :param msg: string
         '''
@@ -67,8 +67,17 @@ class GoogleDriveLayer(QObject):
 
 
     def __init__(self, parent, authorization, layer_name, spreadsheet_id = None, loading_layer = None, importing_layer = None, crs_def = None, geom_type = None, test = None):
-        """ Initialize the layer by reading the Google drive sheet, creating a memory
-        layer, and adding records to it """
+        '''
+        Initialize the layer by reading the Google drive sheet, creating a memory
+        layer, and adding records to it, optionally used fo layer export to google drive
+        :param parent:
+        :param authorization: google authorization object
+        :param layer_name: the layer name
+        :param spreadsheet_id: the spreadsheetId of the table to download and load as qgis layer; default to None
+        :param loading_layer: the layer loading from project file; default to None
+        :param importing_layer: the layer that is being imported; default to None
+        :param test: used for testing
+        '''
 
         super(GoogleDriveLayer, self).__init__()
         # Save the path to the file soe we can update it in response to edits
@@ -165,7 +174,9 @@ class GoogleDriveLayer(QObject):
         lyr.gDriveInterface = self
 
     def add_records(self):
-        """ Add records to the memory layer by reading the Google Sheet """
+        '''
+        Add records to the memory layer by reading the Google Sheet
+        '''
         self.lyr.startEditing()
 
         for i, row in enumerate(self.reader[1:]):
@@ -195,7 +206,6 @@ class GoogleDriveLayer(QObject):
     def style_changed(self):
         '''
         landing method for rendererChanged signal. It stores xml qgis style definition to the setting sheet
-        :return:
         '''
         logger( "style changed")
         self.service_sheet.set_style(self.layer_style_to_xml(self.lyr))
@@ -209,8 +219,7 @@ class GoogleDriveLayer(QObject):
 
     def update_from_subscription(self):
         '''
-        The method updates qgis memory layer with canges made by other users and sincronize the local qgis layer with google sheet spreadsheet
-        :return:
+        The method updates qgis memory layer with changes made by other users and sincronize the local qgis layer with google sheet spreadsheet
         '''
         self.renew_connection()
         bar = progressBar(self, 'updating local layer from remote')
@@ -268,8 +277,10 @@ class GoogleDriveLayer(QObject):
         bar.stop("local layer updated")
 
     def editing_started(self):
-        """ Connect to the edit buffer so we can capture geometry and attribute
-        changes """
+        '''
+        Connect to the edit buffer so we can capture geometry and attribute
+        changes
+        '''
         print "editing"
         self.update_from_subscription()
         self.bar = None
@@ -293,7 +304,6 @@ class GoogleDriveLayer(QObject):
         Further edits to the modified feature are denied to other concurrent users
         :param fid:
         :param geom:
-        :return:
         '''
         if self.editing:
             if self.test:
@@ -311,7 +321,6 @@ class GoogleDriveLayer(QObject):
         :param fid:
         :param attr_id:
         :param value:
-        :return:
         '''
         if self.editing:
             if self.test:
@@ -372,9 +381,9 @@ class GoogleDriveLayer(QObject):
         self.editing = False
 
     def editing_stopped(self):
-        """ Update the file if changes were committed """
-        #self.lyr.geometryChanged.disconnect(self.buffer_geometry_changed)
-        #self.lyr.attributeValueChanged.disconnect(self.buffer_attributes_changed)
+        """
+        Update the remote sheet if changes were committed
+        """
         self.renew_connection()
         self.update_summary_sheet()
         if self.service_sheet.canEdit:
@@ -489,6 +498,7 @@ class GoogleDriveLayer(QObject):
             new_row_dict = {}.fromkeys(self.service_sheet.header,'()')
             new_row_dict['WKTGEOMETRY'] = base64.b64encode(zlib.compress(feature.geometry().exportToWkt()))
             new_row_dict['STATUS'] = '()'
+            new_row_dict['FEATUREID'] = '=ROW()' #assure correspondance between feature and sheet row
             print feature.attributes()
             for i,item in enumerate(feature.attributes()):
                 fieldName = self.lyr.fields().at(i).name()
@@ -557,7 +567,6 @@ class GoogleDriveLayer(QObject):
     def unsubscribe(self):
         '''
         When a read/write layer is removed from the legend the remote subscription sheet is removed and update summary sheet if dirty
-        :return:
         '''
         self.renew_connection()
         self.service_sheet.unsubscribe()
@@ -607,8 +616,8 @@ class GoogleDriveLayer(QObject):
                 row.append(unicode(field.name()).encode("utf-8"))# slugify(field.name())
             break
         rows = [row]
-        for i,feat in enumerate(qgis_layer.getFeatures()):
-            row = [base64.b64encode(zlib.compress(feat.geometry().exportToWkt(precision=10))),"()",i+2] #i+2 to make equal featureid and row
+        for feat in qgis_layer.getFeatures():
+            row = [base64.b64encode(zlib.compress(feat.geometry().exportToWkt(precision=10))),"()","=ROW()"] # =ROW() perfect row/featureid correspondance
             if len(row[0]) > 10000:
                 print feat.id, len(row)
             if len(row[0]) > 50000: # ignore features with geometry > 50000 bytes zipped
@@ -702,7 +711,6 @@ class GoogleDriveLayer(QObject):
     def get_layer_metadata(self):
         '''
         builds a metadata dict of the current layer to be stored in summary sheet
-        :return:
         '''
         #fields = collections.OrderedDict()
         fields = ""
@@ -722,6 +730,9 @@ class GoogleDriveLayer(QObject):
         return metadata
 
     def update_summary_sheet(self):
+        '''
+        Creates a summary sheet with thumbnail, layer metadata and online view link
+        '''
         #create a layer snapshot and upload it to google drive
         canvas = QgsMapCanvas()
         canvas.resize(QSize(300,300))
@@ -739,7 +750,6 @@ class GoogleDriveLayer(QObject):
         tmp_path = os.path.join(self.parent.plugin_dir,self.service_sheet.name+".png")
         image.save(tmp_path,"PNG")
         image_istances = self.service_drive.list_files(mimeTypeFilter='image/png',filename=self.service_sheet.name+".png")
-        print image_istances
         for imagename, image_props in image_istances.iteritems():
             print imagename, image_props['id']
             self.service_drive.delete_file(image_props['id'])
