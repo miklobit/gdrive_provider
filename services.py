@@ -3,11 +3,11 @@
 /***************************************************************************
                                  A QGIS plugin
  A plugin for using Google drive sheets as QGIS layer shared between concurrent users
-wrapper classes to google oauth2 lib, google drive api and google sheet api
+ portions of code are from https://github.com/g-sherman/pseudo_csv_provider
                               -------------------
         begin                : 2015-03-13
         git sha              : $Format:%H$
-        copyright            : (C)2017 Enrico Ferreguti
+        copyright            : (C)2017 Enrico Ferreguti (C)2015 by GeoApt LLC gsherman@geoapt.com
         email                : enricofer@gmail.com
  ***************************************************************************/
 
@@ -20,6 +20,10 @@ wrapper classes to google oauth2 lib, google drive api and google sheet api
  *                                                                         *
  ***************************************************************************/
 """
+
+__author__ = 'enricofer@gmail.com'
+__date__ = '2017-03-24'
+__copyright__ = 'Copyright 2017, Enrico Ferreguti'
 
 
 #QT4 specific
@@ -215,7 +219,7 @@ class service_drive:
         query = "mimeType = '%s'%s%s" % (mimeTypeFilter, app_query, sharedWith)
         print query
         raw_list = self.service.files().list(orderBy=orderBy, q=query, fields='files').execute()
-        print "raw_list", raw_list
+        #print "raw_list", raw_list
         clean_dict = collections.OrderedDict()
         order = 1
         for item in raw_list['files']:
@@ -357,7 +361,7 @@ class service_drive:
         :param fileId:
         :return:
         '''
-        self.set_spreadsheet_property(fileId, 'trashed', True)
+        self.set_file_property(fileId, 'trashed', True)
 
     def delete_file(self, fileId):
         '''
@@ -505,7 +509,7 @@ class service_spreadsheet:
         Method to sync the class header dict the main spreadsheet sheet headers
         :return: None
         '''
-        result = self.service.spreadsheets().values().batchGet(spreadsheetId=self.spreadsheetId, ranges='1:1').execute()
+        result = self.service.spreadsheets().values().batchGet(spreadsheetId=self.spreadsheetId, ranges=self.name+'!1:1').execute()
         #print "service_sheet",result
         self.header_map = {}
         self.header = []
@@ -545,9 +549,18 @@ class service_spreadsheet:
         result = self.service.spreadsheets().batchUpdate(spreadsheetId=self.spreadsheetId, body=request_body).execute()
         return result
     
-    def cell(self,field,row):
+    def cell(self,field,row, sheet = None):
+        '''
+        Return a single cell value
+        :param field: name of the field
+        :param row: sheet row of the feature
+        :param sheet: sheet name, default main table
+        :return:
+        '''
+        if not sheet:
+            sheet = self.name
         if field in self.header_map.keys():
-            A1_coords = self.header_map[field]+str(row)
+            A1_coords = sheet+'!'+self.header_map[field]+str(row)
             return self.sheet_cell(A1_coords)
         
     def sheet_cell(self,A1_coords):
@@ -565,16 +578,19 @@ class service_spreadsheet:
             cell_value = None
         return cell_value
         
-    def set_cell(self, field, row, value):
+    def set_cell(self, field, row, value, sheet = None):
         '''
         method to set a cell value giving the field name and the row
         :param field:
         :param row:
         :param value:
+        :param sheet: sheet name, default main table
         :return: response object
         '''
+        if not sheet:
+            sheet = self.name
         if field in self.header_map.keys():
-            A1_coords = self.header_map[field]+str(row)
+            A1_coords = sheet+'!'+self.header_map[field]+str(row)
             result = self.set_sheet_cell(A1_coords,value)
             if row == 1: #if row 1 is header so update stored header list
                 self.update_header()
@@ -583,41 +599,66 @@ class service_spreadsheet:
             #raise Exception("field %s not found") % field
             pass
 
-    def set_multicell(self, mods, lockBy = None):
+    def multicell(self,lookup_ranges, sheet=None):
+        if not sheet:
+            sheet = self.name
+        ranges = []
+        for (field, row) in lookup_ranges:
+            ranges.append(sheet + '!B' + str(row))
+        result = self.service.spreadsheets().values().batchGet(spreadsheetId=self.spreadsheetId,
+                                                                  ranges=ranges).execute()
+        return result
+
+    def set_protected_multicell(self, mods, lockBy = None):
+        if not lockBy:
+            lockBy = self.credentials.client_id
+
+        mods_by_row = {}
+        status_check = []
+        for mod in mods:
+            mods_by_row[mod[1]] = mod
+            status_check.append(("STATUS", mod[1]))
+        status_control = self.multicell(status_check)
+
+        if "valueRanges" in status_control:
+            for valueRange in status_control["valueRanges"]:
+                if not valueRange["values"][0][0] in ('()', None, lockBy):  # check for locked row
+                    row = valueRange["range"].split('B')[-1]
+                    print "LOCKED ROW:", int(row)
+                    print "EXPUNGE", int(row), mods_by_row.pop(int(row), None)
+
+        if mods_by_row.values():
+            value_mods_result = self.set_multicell(mods_by_row.values())
+            return value_mods_result
+
+    def set_multicell(self, mods, A1notation=None, sheet=None):
         '''
         method to set multiple cells providing a mods list
         if a client_id is provided the status field if locked by client_id to prevent concurrent edits
         :param mods: (field/rows/value) list
         :param lockBy: a client_id, default to None
+        :param sheet: sheet name, default main table
         :return:
         '''
         locked = None
-        if lockBy:
-            ranges = []
-            for (field, row, value) in mods:
-                ranges.append( 'B' + str(row))
-            print ranges
-            query = self.service.spreadsheets().values().batchGet(spreadsheetId=self.spreadsheetId, ranges=ranges).execute()
-            for value in query['valueRanges']:
-                if not value["values"][0][0] in ('', '()','D', lockBy):
-                    locked = value["values"][0][0]
-                    break
-        if locked:
-            print "Multi cell update is locked by "+locked
-            return None
-
+        if not sheet:
+            sheet = self.name
         update_body = {
             "valueInputOption": 'USER_ENTERED',
             "data": []
         }
         for (field, row, value) in mods:
-            if field in self.header_map.keys():
+            if A1notation or field in self.header_map.keys():
                 if not value or value == qgis.core.NULL:
                     cleared_value = "()"
                 else:
                     cleared_value = value
+                if A1notation:
+                    rangedef = field #if A1notation selector is True field contains the complete a1 range
+                else:
+                    rangedef = sheet+"!"+self.header_map[field] + str(row)
                 valueRange = {
-                    "range": self.header_map[field] + str(row),
+                    "range": rangedef,
                     "values": [[cleared_value]]
                 }
                 update_body['data'].append(valueRange)
@@ -625,7 +666,7 @@ class service_spreadsheet:
                 continue
         result = self.service.spreadsheets().values().batchUpdate(spreadsheetId=self.spreadsheetId, body=update_body).execute()
         #print result
-        return self.service.spreadsheets().values().batchUpdate(spreadsheetId=self.spreadsheetId, body=update_body).execute()
+        return result
 
     def get_line(self, majorDimension, line, sheet = None):
         '''
@@ -775,15 +816,15 @@ class service_spreadsheet:
         :return:
         '''
         formula = formula.replace('SHEET',self.name)
-        self.set_sheet_cell("settings!A1",formula)
-        return self.sheet_cell("settings!A1")
+        self.set_sheet_cell("settings!C2",formula)
+        return self.sheet_cell("settings!C2")
     
     def new_fid(self):
         '''
         the method returns a new fid for new feaute creation
         :return:
         '''
-        return self.evaluate_formula('=MAX(SHEET!C2:C)') +1
+        return self.evaluate_formula('=MAX(%s!C2:C)' % self.name) +1
 
 
     def erase_cells(self,range):

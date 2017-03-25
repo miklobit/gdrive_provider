@@ -1,14 +1,44 @@
+# -*- coding: utf-8 -*-
+"""
+/***************************************************************************
+                                 A QGIS plugin
+ A plugin for using Google drive sheets as QGIS layer shared between concurrent users
+ portions of code are from https://github.com/g-sherman/pseudo_csv_provider
+                              -------------------
+        begin                : 2015-03-13
+        git sha              : $Format:%H$
+        copyright            : (C)2017 Enrico Ferreguti (C)2015 by GeoApt LLC gsherman@geoapt.com
+        email                : enricofer@gmail.com
+ ***************************************************************************/
+
+/***************************************************************************
+ *                                                                         *
+ *   This program is free software; you can redistribute it and/or modify  *
+ *   it under the terms of the GNU General Public License as published by  *
+ *   the Free Software Foundation; either version 2 of the License, or     *
+ *   (at your option) any later version.                                   *
+ *                                                                         *
+ ***************************************************************************/
+"""
+
+__author__ = 'enricofer@gmail.com'
+__date__ = '2017-03-24'
+__copyright__ = 'Copyright 2017, Enrico Ferreguti'
+
+
 import csv
 import shutil
 import os
 import io
 import sys
 import StringIO
+import json
 import collections
 import base64
 import zlib
 import thread
 import traceback
+from time import sleep
 
 from tempfile import NamedTemporaryFile
 from PyQt4.QtXml import QDomDocument
@@ -61,6 +91,7 @@ class GoogleDriveLayer(QObject):
     """ Pretend we are a data provider """
 
     invalidEdit = pyqtSignal()
+    deferredEdit = pyqtSignal()
     dirty = False
     doing_attr_update = False
     geom_types = ("Point", "LineString", "Polygon","Unknown","NoGeometry")
@@ -157,6 +188,7 @@ class GoogleDriveLayer(QObject):
         :param lyr: qgis layer
         :return:
         '''
+        self.deferredEdit.connect(self.apply_locks)
         lyr.editingStarted.connect(self.editing_started)
         lyr.editingStopped.connect(self.editing_stopped)
         lyr.committedAttributesDeleted.connect(self.attributes_deleted)
@@ -170,7 +202,7 @@ class GoogleDriveLayer(QObject):
         self.sync_with_google_drive_action = QAction(QIcon(os.path.join(self.parent.plugin_dir,'sync.png')), "Sync with Google drive", self.iface.legendInterface() )
         self.iface.legendInterface().addLegendLayerAction(self.sync_with_google_drive_action, "","01", QgsMapLayer.VectorLayer,False)
         self.iface.legendInterface().addLegendLayerActionForLayer(self.sync_with_google_drive_action, lyr)
-        self.sync_with_google_drive_action.triggered.connect(self.update_from_subscription)
+        self.sync_with_google_drive_action.triggered.connect(self.sync_with_google_drive)
         lyr.gDriveInterface = self
 
     def add_records(self):
@@ -216,6 +248,10 @@ class GoogleDriveLayer(QObject):
         '''
         self.service_drive.renew_connection()
 
+    def sync_with_google_drive(self):
+        self.renew_connection()
+        self.update_from_subscription()
+        self.update_summary_sheet()
 
     def update_from_subscription(self):
         '''
@@ -286,7 +322,6 @@ class GoogleDriveLayer(QObject):
         self.bar = None
         if self.service_sheet.canEdit:
             self.activeThreads = 0
-            self.lockedFeatures = []
             self.editing = True
             self.lyr.geometryChanged.connect(self.buffer_geometry_changed)
             self.lyr.attributeValueChanged.connect(self.buffer_attributes_changed)
@@ -294,6 +329,8 @@ class GoogleDriveLayer(QObject):
             self.lyr.beforeRollBack.connect(self.rollBack)
             self.invalidEdit.connect(self.rollBack)
             self.changes_log=[]
+            self.locking_queue = []
+            self.timer = 0
         else: #refuse editing if file is read only
             self.lyr.rollBack()
 
@@ -306,14 +343,98 @@ class GoogleDriveLayer(QObject):
         :param geom:
         '''
         if self.editing:
+            self.lock_feature(fid)
+
+    def buffer_attributes_changed(self,fid,attr_id,value):
+        '''
+        Landing method for attributeValueChanged signal.
+        When an attribute is modified, the row related to the modified feature is marked as modified by local user.
+        Further edits to the modified feature are denied to other concurrent users
+        :param fid:
+        :param attr_id:
+        :param value:
+        '''
+        if self.editing:
+            self.lock_feature(fid)
+
+
+    def lock_feature(self, fid):
+        """
+        The row in google sheet linked to feature that has been modified is locked
+        Filling the the STATUS column with the client_id.
+        Further edits to the modified feature are denied to other concurrent users
+        """
+        if fid >= 0: # fid <0 means that the change relates to newly created features not yet present in the sheet
+            self.locks_applied = None
+            feature_locking = self.lyr.getFeatures(QgsFeatureRequest(fid)).next()
+            locking_row_id = feature_locking[0]
+            self.locking_queue.append(locking_row_id)
+            thread.start_new_thread(self.deferred_apply_locks, ())
+
+
+    def deferred_apply_locks(self):
+        if self.timer > 0:
+            self.timer = 0
+            return
+        else:
+            while self.timer < 100:
+                self.timer += 1
+                sleep(0.01)
+            #APPLY_LOCKS
+            self.deferredEdit.emit()
+            #self.apply_locks()
+
+    def apply_locks(self):
+        if self.locks_applied:
+            return
+        self.locks_applied = True
+        status_range = []
+        for row_id in self.locking_queue:
+            #print "locking_row_id",locking_row_id
+            status_range.append(['STATUS', row_id])
+        status_control = self.service_sheet.multicell(status_range)
+        if "valueRanges" in status_control:
+            mods = []
+            for valueRange in status_control["valueRanges"]:
+                if valueRange["values"][0][0] in ('()', None):
+                    mods.append([valueRange["range"],0,self.client_id])
+                    row_id = valueRange["range"].split('B')[-1]
+            if mods:
+                print "MULTICELL", self.service_sheet.set_multicell(mods, A1notation=True)
+        self.locking_queue = []
+        self.timer = 0
+
+    def ex_apply_locks(self):
+        mods = []
+        for row_id in self.locking_queue:
+            #print "locking_row_id",locking_row_id
+            status = self.service_sheet.cell('STATUS', row_id)
+            if status in (None,''):
+                self.service_sheet.set_cell('STATUS', row_id, self.client_id)
+                #mods.append(['STATUS', row_id, self.client_id])
+        if mods:
+            self.service_sheet.set_multicell(mods)
+        self.locking_queue = []
+        self.timer = 0
+
+    def ex_buffer_geometry_changed(self,fid,geom):
+        '''
+        Landing method for geometryChanged signal.
+        When a geometry is modified, the row related to the modified feature is marked as modified by local user.
+        Further edits to the modified feature are denied to other concurrent users
+        :param fid:
+        :param geom:
+        '''
+        if self.editing:
             if self.test:
                 self.lock_feature(fid)
             else:
+                print "geom changed fid:",fid, self.locking_queue
                 thread.start_new_thread(self.lock_feature, (fid,))
             #logger("active threads: "+ str( self.activeThreads))
             #self.lock_feature(fid)
 
-    def buffer_attributes_changed(self,fid,attr_id,value):
+    def ex_buffer_attributes_changed(self,fid,attr_id,value):
         '''
         Landing method for attributeValueChanged signal.
         When an attribute is modified, the row related to the modified feature is marked as modified by local user.
@@ -326,51 +447,49 @@ class GoogleDriveLayer(QObject):
             if self.test:
                 self.lock_feature(fid)
             else:
+                print "attr changed fid:",fid, self.locking_queue
                 thread.start_new_thread(self.lock_feature, (fid,))
             #logger("active threads: "+ str( self.activeThreads))
             #print "active threads: ", self.activeThreads
             #self.lock_feature(fid)
 
-
-    def lock_feature(self,fid):
+    def ex_lock_feature(self,fid):
         """
         The row in google sheet linked to feature that has been modified is locked
         Filling the the STATUS column with the client_id.
         Further edits to the modified feature are denied to other concurrent users
         """
         self.activeThreads += 1
-        if fid >= 0 and self.activeThreads < 2: # fid <0 means that the change relates to newly created features not yet present in the sheet
-            feature_locking = self.lyr.getFeatures(QgsFeatureRequest(fid)).next()
-            locking_row_id = feature_locking[0]
-            status = self.service_sheet.cell('STATUS', locking_row_id)
-            if status in (None,''):
-                self.service_sheet.set_cell('STATUS', locking_row_id, self.client_id)
-                #logger("feature #%s locked by %s" % (locking_row_id, self.client_id))
-                self.lockedFeatures.append(locking_row_id)
-            #else:
-                #pass
-                #logger( "LOCK ERROR", "FEATURE %s IS LOCKED BY: %s, EDITS WILL NOT BE SAVED" % (locking_row_id ,status))
-                #print "LOCK ERROR", "FEATURE %s IS LOCKED BY: %s, EDITS WILL NOT BE SAVED" % (locking_row_id ,status)
-                #self.iface.messageBar().pushMessage("LOCK ERROR", "FEATURE %s IS LOCKED BY: %s, EDITS WILL NOT BE SAVED" % (locking_row_id ,status),level=QgsMessageBar.CRITICAL)
-                #self.invalidEdit.emit()
-                #self.lyr.rollBack()
+        if fid >= 0:
+            self.locking_queue.append(fid)
+            if self.activeThreads < 2: # fid <0 means that the change relates to newly created features not yet present in the sheet
+                while self.locking_queue:
+                    lock_fid = self.locking_queue[0]
+                    self.locking_queue = self.locking_queue[1:]
+                    feature_locking = self.lyr.getFeatures(QgsFeatureRequest(lock_fid)).next()
+                    locking_row_id = feature_locking[0]
+                    status = self.service_sheet.cell('STATUS', locking_row_id)
+                    if status in (None,''):
+                        self.service_sheet.set_cell('STATUS', locking_row_id, self.client_id)
+                        #logger("feature #%s locked by %s" % (locking_row_id, self.client_id))
 
-        else:
-            logger( "editing newly created feature %s" % fid)
         self.activeThreads -= 1
 
     def rollBack(self):
         """
         before rollback changes status field is cleared and the edits from concurrent user are allowed
         """
+        print "ROLLBACK"
+        try:
+            self.lyr.geometryChanged.disconnect(self.buffer_geometry_changed)
+        except:
+            pass
+        try:
+            self.lyr.attributeValueChanged.disconnect(self.buffer_attributes_changed)
+        except:
+            pass
         self.renew_connection()
-        print "ROLLBACK", self.lockedFeatures
-        mods = []
-        for row_id in self.lockedFeatures:
-            logger("rollback changes on feature #"+str(row_id))
-            mods.append(('STATUS', row_id, "()"))
-        if mods:
-            self.service_sheet.set_multicell(mods)
+        self.clean_status_row()
         try:
             self.lyr.beforeRollBack.disconnect(self.rollBack)
         except:
@@ -384,56 +503,17 @@ class GoogleDriveLayer(QObject):
         """
         Update the remote sheet if changes were committed
         """
+        print "EDITING_STOPPED"
         self.renew_connection()
-        self.update_summary_sheet()
+        self.clean_status_row()
         if self.service_sheet.canEdit:
             self.service_sheet.advertise(self.changes_log)
         self.editing = False
-        if self.dirty:
-            self.update_summary_sheet()
-            self.dirty = None
+        #if self.dirty:
+        #    self.update_summary_sheet()
+        #    self.dirty = None
         if self.bar:
             self.bar.stop("update to remote finished")
-
-    def attributes_changed(self, layer, changes):
-        """
-        Landing method for attributeChange.
-        Attribute values changed
-        Edited feature, not locked by other users, are written to the google drive spreadsheets modifying the related rows.
-        Edits are advertized to other concurrent users for subsequent syncronization with remote table
-        """
-        if not self.doing_attr_update:
-            logger("attributes changed")
-            #print "changes",changes
-            value_mods = []
-            status_mods = []
-            for fid,attrib_change in changes.iteritems():
-                feature_changing = self.lyr.getFeatures(QgsFeatureRequest(fid)).next()
-                row_id = feature_changing[0]
-                logger ( "changing row: %s" % row_id)
-                lock = self.service_sheet.cell('STATUS', row_id)
-                if lock and lock != self.client_id:
-                    logger( "cant apply edits to feature, locked by " + lock)
-                    continue
-                for attrib_idx, new_value in attrib_change.iteritems():
-                    fieldName = QgsMapLayerRegistry.instance().mapLayer(layer).fields().field(attrib_idx).name()
-                    if fieldName == 'FEATUREID':
-                        logger("can't modify FEATUREID")
-                        continue
-                    try:
-                        cleaned_value = new_value.toString(format = Qt.ISODate)
-                    except:
-                        if not new_value or new_value == qgis.core.NULL:
-                            cleaned_value = '()'
-                        else:
-                            cleaned_value = new_value
-                    value_mods.append((fieldName,row_id, cleaned_value))
-                    status_mods.append(("STATUS",row_id, "()"))
-                    self.changes_log.append('%s|%s' % ('update_attributes', str(row_id)))
-            value_mods_result = self.service_sheet.set_multicell(value_mods,lockBy=self.client_id)
-            if value_mods_result:
-                self.service_sheet.set_multicell(status_mods)
-
 
     def inspect_changes(self):
         '''
@@ -448,6 +528,7 @@ class GoogleDriveLayer(QObject):
             print "ADDED FIELD", field.name()
             self.service_sheet.add_column([field.name()], fill_with_null = True)
         '''
+        print "INSPECT_CHANGES"
         pass
 
     def attributes_added(self, layer, added):
@@ -486,10 +567,12 @@ class GoogleDriveLayer(QObject):
         Edits are advertized to other concurrent users for subsequent syncronization with remote table
         """
         logger("features added")
-        for feature in features:
+
+        for count,feature in enumerate(features):
             new_fid = self.service_sheet.new_fid()
+            print "NEWFID", new_fid, count
             self.lyr.dataProvider().changeAttributeValues({feature.id() : {0: new_fid}})
-            feature.setAttribute(0, new_fid)
+            feature.setAttribute(0, new_fid+count)
             '''
             print "WKB", base64.b64encode(feature.geometry().asWkb())
             print "WKB", base64.b64encode(zlib.compress(feature.geometry().asWkb()))
@@ -498,8 +581,6 @@ class GoogleDriveLayer(QObject):
             new_row_dict = {}.fromkeys(self.service_sheet.header,'()')
             new_row_dict['WKTGEOMETRY'] = base64.b64encode(zlib.compress(feature.geometry().exportToWkt()))
             new_row_dict['STATUS'] = '()'
-            new_row_dict['FEATUREID'] = '=ROW()' #assure correspondance between feature and sheet row
-            print feature.attributes()
             for i,item in enumerate(feature.attributes()):
                 fieldName = self.lyr.fields().at(i).name()
                 try:
@@ -509,6 +590,7 @@ class GoogleDriveLayer(QObject):
                         new_row_dict[fieldName] = '()'
                     else:
                         new_row_dict[fieldName] = item
+            new_row_dict['FEATUREID'] = '=ROW()' #assure correspondance between feature and sheet row
             result = self.service_sheet.add_row(new_row_dict)
             sheet_new_row = int(result['updates']['updatedRange'].split('!A')[1].split(':')[0])
             self.changes_log.append('%s|%s' % ('new_feature', str(new_fid)))
@@ -525,21 +607,16 @@ class GoogleDriveLayer(QObject):
         """ Features removed; but before commit """
         deleted_ids = self.lyr.editBuffer().deletedFeatureIds()
         if deleted_ids:
-            mods = []
+            deleted_mods = []
             for fid in deleted_ids:
                 removed_feat = self.lyr.dataProvider().getFeatures(QgsFeatureRequest(fid)).next()
                 removed_row = removed_feat[0]
-                print "deleting row:",removed_row,removed_feat
-                lock = self.service_sheet.cell('STATUS', removed_row)
-                if lock and lock != self.client_id:
-                    logger( "feature locked by " + lock)
-                    continue
-                print "REMOVED",removed_feat,removed_row
-                mods.append(("STATUS",removed_row,'D'))
+                logger ("Deleting FEATUREID %s" % removed_row)
+                deleted_mods.append(("STATUS",removed_row,'D'))
                 self.changes_log.append('%s|%s' % ('delete_feature', str(removed_row)))
-            self.service_sheet.set_multicell(mods,lockBy=self.client_id)
+            if deleted_mods:
+                self.service_sheet.set_protected_multicell(deleted_mods)
             self.dirty = True
-
 
     def geometry_changed(self, layer, geom_map):
         """
@@ -550,19 +627,61 @@ class GoogleDriveLayer(QObject):
         (sigle cells string contents can't be larger the 50000 bytes)
         Edits are advertized to other concurrent users for subsequent syncronization with remote table
         """
+        geometry_mod = []
         for fid,geom in geom_map.iteritems():
             feature_changing = self.lyr.getFeatures(QgsFeatureRequest(fid)).next()
             row_id = feature_changing[0]
-            lock = self.service_sheet.cell('STATUS', row_id)
-            if lock and lock != self.client_id:
-                logger( "FEATUREID %s not changed. locked by %s" %(row_id,lock))
-                continue
             wkt = geom.exportToWkt(precision=10)
-            self.service_sheet.set_cell('WKTGEOMETRY',row_id, base64.b64encode(zlib.compress(wkt)))
-            self.service_sheet.set_cell('STATUS',row_id, '()')
+            geometry_mod.append(('WKTGEOMETRY',row_id, base64.b64encode(zlib.compress(wkt))))
             logger ("Updated FEATUREID %s geometry" % row_id)
             self.changes_log.append('%s|%s' % ('update_geometry', str(row_id)))
+
+        value_mods_result = self.service_sheet.set_protected_multicell(geometry_mod, lockBy=self.client_id)
         self.dirty = True
+
+    def attributes_changed(self, layer, changes):
+        """
+        Landing method for attributeChange.
+        Attribute values changed
+        Edited feature, not locked by other users, are written to the google drive spreadsheets modifying the related rows.
+        Edits are advertized to other concurrent users for subsequent syncronization with remote table
+        """
+        if not self.doing_attr_update:
+            #print "changes",changes
+            attribute_mods = []
+            for fid,attrib_change in changes.iteritems():
+                feature_changing = self.lyr.getFeatures(QgsFeatureRequest(fid)).next()
+                row_id = feature_changing[0]
+                logger ( "Attribute changing FEATUREID: %s" % row_id)
+                for attrib_idx, new_value in attrib_change.iteritems():
+                    fieldName = QgsMapLayerRegistry.instance().mapLayer(layer).fields().field(attrib_idx).name()
+                    if fieldName == 'FEATUREID':
+                        logger("can't modify FEATUREID")
+                        continue
+                    try:
+                        cleaned_value = new_value.toString(format = Qt.ISODate)
+                    except:
+                        if not new_value or new_value == qgis.core.NULL:
+                            cleaned_value = '()'
+                        else:
+                            cleaned_value = new_value
+                    attribute_mods.append((fieldName,row_id, cleaned_value))
+                self.changes_log.append('%s|%s' % ('update_attributes', str(row_id)))
+
+            if attribute_mods:
+                attribute_mods_result = self.service_sheet.set_protected_multicell(attribute_mods, lockBy=self.client_id)
+            self.dirty = True
+
+    def clean_status_row(self):
+        status_line = self.service_sheet.get_line("COLUMNS","B")
+        print "status_line",status_line
+        clean_status_mods = []
+        for row_line, row_value in enumerate(status_line):
+            if row_value == self.client_id:
+                clean_status_mods.append(("STATUS",row_line+1,'()'))
+        print "clean_status_mods", clean_status_mods
+        value_mods_result = self.service_sheet.set_multicell(clean_status_mods)
+        print "value_mods_result", value_mods_result
 
     def unsubscribe(self):
         '''
@@ -570,8 +689,6 @@ class GoogleDriveLayer(QObject):
         '''
         self.renew_connection()
         self.service_sheet.unsubscribe()
-        if self.dirty:
-            self.update_summary_sheet()
 
     def qgis_layer_to_csv(self,qgis_layer):
         '''
@@ -734,6 +851,8 @@ class GoogleDriveLayer(QObject):
         Creates a summary sheet with thumbnail, layer metadata and online view link
         '''
         #create a layer snapshot and upload it to google drive
+        if not self.dirty:
+            return
         canvas = QgsMapCanvas()
         canvas.resize(QSize(300,300))
         canvas.setCanvasColor(Qt.white)

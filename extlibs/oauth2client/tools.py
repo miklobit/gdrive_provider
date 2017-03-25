@@ -25,6 +25,9 @@ import logging
 import socket
 import sys
 
+if not hasattr(sys, 'argv'):
+    sys.argv  = ['']
+
 from six.moves import BaseHTTPServer
 from six.moves import http_client
 from six.moves import input

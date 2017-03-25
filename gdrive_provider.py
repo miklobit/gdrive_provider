@@ -20,6 +20,12 @@
  *                                                                         *
  ***************************************************************************/
 """
+
+__author__ = 'enricofer@gmail.com'
+__date__ = '2017-03-24'
+__copyright__ = 'Copyright 2017, Enrico Ferreguti'
+
+
 from PyQt4.QtCore import QSettings, QTranslator, qVersion, QCoreApplication, QTimer, QUrl, QSize
 from PyQt4.QtGui import QAction, QIcon, QDialog, QProgressBar, QDialogButtonBox, QListWidgetItem, QPixmap
 from qgis.core import QgsMapLayer, QgsVectorLayer, QgsProject, QgsMapLayerRegistry, QgsMessageLog, QgsNetworkAccessManager
@@ -226,6 +232,7 @@ class Google_Drive_Provider:
         self.dup_to_google_drive_action = QAction(QIcon(icon_path), "Duplicate to Google drive layer", self.iface.legendInterface() )
         self.iface.legendInterface().addLegendLayerAction(self.dup_to_google_drive_action, "","01", QgsMapLayer.VectorLayer,True)
         self.dup_to_google_drive_action.triggered.connect(self.dup_to_google_drive)
+
         #authorize plugin
         s = QSettings()
         self.client_id = s.value("GooGIS/gdrive_account",  defaultValue =  None)
@@ -234,13 +241,19 @@ class Google_Drive_Provider:
         #    self.authorization = google_authorization(SCOPES,os.path.join(self.plugin_dir,'credentials'),APPLICATION_NAME,self.client_id)
         #QgsProject.instance().layerLoaded.connect(self.loadGDriveLayers)
         QgsProject.instance().readProject.connect(self.loadGDriveLayers)
+        QgsMapLayerRegistry.instance().layersWillBeRemoved.connect(self.updateSummarySheet)
 
 
     def unload(self):
         """
         Removes the plugin menu item and icon from QGIS GUI.
         """
+        try:
+            self.remove_GooGIS_layers()
+        except:
+            pass
         QgsProject.instance().readProject.disconnect(self.loadGDriveLayers)
+        QgsMapLayerRegistry.instance().layersWillBeRemoved.disconnect(self.updateSummarySheet)
         for action in self.actions:
             self.iface.removePluginVectorMenu(
                 self.tr(u'&Google Drive Provider'),
@@ -249,7 +262,6 @@ class Google_Drive_Provider:
         # remove the toolbar
         del self.toolbar
         self.iface.legendInterface().removeLegendLayerAction(self.dup_to_google_drive_action)
-        self.remove_GooGIS_layers()
 
     def GooGISLayers(self):
         '''
@@ -287,12 +299,20 @@ class Google_Drive_Provider:
                 layer.editingStarted.connect(self.gdrive_layer.editing_started)
                 layer.updateExtents()
 
-
+    def updateSummarySheet(self,layer_ids):
+        for layer_id in layer_ids:
+            removing_layer = QgsMapLayerRegistry.instance().mapLayer(layer_id)
+            if self.isGooGISLayer(removing_layer):
+                self.myDrive.renew_connection()
+                removing_layer.gDriveInterface.update_summary_sheet()
 
     def test_suite(self):
+        if not self.client_id or not self.myDrive:
+            self.updateAccountAction()
         #self.sheet_layer = GoogleDriveLayer(self.authorization, sheet_name, sheet_id='1hC8iT7IutoYDVDLlEWF8_op2viNRsUdv8tTVo9RlPkE')
         #gdrive = service_drive(self.authorization)
         #gsheet = service_sheet(self.authorization,'1hC8iT7IutoYDVDLlEWF8_op2viNRsUdv8tTVo9RlPkE')
+        self.myDrive.configure_service()
         layer_a = QgsVectorLayer(os.path.join(self.plugin_dir,'test','dataset','c0601016_SistemiEcorelazionali.shp'), "layer_a", 'ogr')
         layer_b = QgsVectorLayer(os.path.join(self.plugin_dir,'test','dataset','c0601037_SpecieArboree.shp'), "layer_b", 'ogr')
         layer_c = QgsVectorLayer(os.path.join(self.plugin_dir,'test','dataset','c0509028_LocSitiContaminati.shp'), "layer_c", 'ogr')
@@ -694,6 +714,7 @@ body {
         '''
         Method to remove loaded GooGIS layer from legend and map canvas. Used uninstalling plugin
         '''
+        self.myDrive.renew_connection()
         for layer_id,layer in QgsMapLayerRegistry.instance().mapLayers().iteritems():
             print layer_id, hasattr(layer, 'gDriveInterface')
             if hasattr(layer, 'gDriveInterface'):
