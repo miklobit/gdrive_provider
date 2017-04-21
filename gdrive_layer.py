@@ -130,6 +130,7 @@ class GoogleDriveLayer(QObject):
             self.service_sheet.set_geom_type(self.geom_types[importing_layer.geometryType()])
             self.service_sheet.set_style(self.layer_style_to_xml(importing_layer))
             self.service_sheet.set_sld(self.SLD_to_xml(importing_layer))
+            self.update_summary_sheet()
             self.saveFieldTypes(importing_layer.fields())
 
         self.reader = self.service_sheet.get_sheet_values()
@@ -400,7 +401,7 @@ class GoogleDriveLayer(QObject):
                     mods.append([valueRange["range"],0,self.client_id])
                     row_id = valueRange["range"].split('B')[-1]
             if mods:
-                print "MULTICELL", self.service_sheet.set_multicell(mods, A1notation=True)
+                self.service_sheet.set_multicell(mods, A1notation=True)
         self.locking_queue = []
         self.timer = 0
 
@@ -583,6 +584,7 @@ class GoogleDriveLayer(QObject):
             new_row_dict['STATUS'] = '()'
             for i,item in enumerate(feature.attributes()):
                 fieldName = self.lyr.fields().at(i).name()
+                print "FFFF", fieldName
                 try:
                     new_row_dict[fieldName] = item.toString(format = Qt.ISODate)
                 except:
@@ -674,14 +676,12 @@ class GoogleDriveLayer(QObject):
 
     def clean_status_row(self):
         status_line = self.service_sheet.get_line("COLUMNS","B")
-        print "status_line",status_line
         clean_status_mods = []
         for row_line, row_value in enumerate(status_line):
             if row_value == self.client_id:
                 clean_status_mods.append(("STATUS",row_line+1,'()'))
-        print "clean_status_mods", clean_status_mods
         value_mods_result = self.service_sheet.set_multicell(clean_status_mods)
-        print "value_mods_result", value_mods_result
+        return value_mods_result
 
     def unsubscribe(self):
         '''
@@ -832,7 +832,7 @@ class GoogleDriveLayer(QObject):
         #fields = collections.OrderedDict()
         fields = ""
         for field in self.lyr.fields().toList():
-            fields += field.name()+'_'+QVariant.typeToName(field.type())[1:]+'|'+str(field.length())+'|'+str(field.precision())+' '
+            fields += field.name()+'_'+QVariant.typeToName(field.type())+'|'+str(field.length())+'|'+str(field.precision())+' '
         #metadata = collections.OrderedDict()
         metadata = [
             ['layer_name', self.lyr.name(),],
@@ -916,7 +916,6 @@ class GoogleDriveLayer(QObject):
                 public = False
         if public:
             publicLink = "https://enricofer.github.io/GooGIS2CSV/converter.html?spreadsheet_id="+self.spreadsheet_id
-            print "public link", self.service_sheet.set_sheet_cell('summary!A9', publicLink)
         #hide worksheets except summary
         sheets = self.service_sheet.get_sheets()
         #self.service_sheet.toggle_sheet('summary', sheets['summary'], hidden=None)

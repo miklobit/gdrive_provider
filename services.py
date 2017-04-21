@@ -30,7 +30,7 @@ __copyright__ = 'Copyright 2017, Enrico Ferreguti'
 from PyQt4.QtCore import QSettings
 
 #QGIS specific
-import qgis.core
+from qgis.core import QgsMessageLog, NULL
 
 #Standard modules
 import httplib2
@@ -54,7 +54,7 @@ from oauth2client.file import Storage
 from utils import slugify
 
 
-logger = lambda msg: qgis.core.QgsMessageLog.logMessage(msg, 'Googe Drive Provider', 1)
+logger = lambda msg: QgsMessageLog.logMessage(msg, 'Googe Drive Provider', 1)
 
 def int_to_a1(n):
     if n < 1:
@@ -81,7 +81,14 @@ class google_authorization:
 
         try:
             import argparse
-            self.flags = argparse.ArgumentParser(parents=[tools.argparser]).parse_args()
+            parser = tools.argparser
+            #parser = ArgumentParser(prog='', usage=None, description=None, version=None, formatter_class=<class 'argparse.HelpFormatter'>, conflict_handler='error', add_help=False)
+            try:
+                self.flags = argparse.ArgumentParser(parents=[tools.argparser]).parse_args()
+            except:
+                self.flags = argparse.Namespace(auth_host_name='localhost', auth_host_port=[8080, 8090], logging_level='ERROR', noauth_local_webserver=False)
+            #self.flags = argparse.ArgumentParser(prog='', usage=None, description=None, version=None, add_help=False).parse_args()
+            print "self.flags",self.flags
         except ImportError:
             self.flags = None
 
@@ -140,7 +147,9 @@ class service_drive:
         :param credentials:
         '''
         self.credentials = credentials
-        self.configure_service()
+        #self.configure_service()
+        authorized_http = self.credentials.authorize()
+        self.service = discovery.build('drive', 'v3', http=authorized_http)
 
     def configure_service(self):
         '''
@@ -274,6 +283,24 @@ class service_drive:
         result = self.service.files().update(fileId=fileId, body=update_body).execute()
         return result
 
+    def mark_as_dirty(self,fileId):
+        update_body = {
+          "appProperties": {
+            "dirty": "YES"
+          }
+        }
+        result = self.service.files().update(fileId=fileId, body=update_body).execute()
+        return result
+
+    def mark_as_cleaned(self,fileId):
+        update_body = {
+          "appProperties": {
+            "dirty": "NO"
+          }
+        }
+        result = self.service.files().update(fileId=fileId, body=update_body).execute()
+        return result
+
     def download_file(self,fileId):
         '''
         returns files giving file_id
@@ -371,6 +398,22 @@ class service_drive:
         '''
         self.service.files().delete(fileId=fileId).execute()
 
+    def publish_file(self, fileId, published):
+        '''
+
+        :param fileId: drive file id
+        :param published: boolean True for published None for unpublished
+        :return:
+        '''
+        revs = self.service.revisions().list(fileId=fileId).execute()["revisions"]
+        update_body = {
+            'published': published,
+            'publishAuto': published,
+            "keepForever": None,
+            "publishedOutsideDomain": published
+        }
+        return self.service.revisions().update(fileId=fileId, revisionId=revs[-1]['id'], body=update_body).execute()
+
 
 class service_spreadsheet:
 
@@ -454,14 +497,15 @@ class service_spreadsheet:
         for subsequent syncronizations
         :return: returns subscription sheet id
         '''
-        if not self.credentials.client_id in self.get_sheets():
+        current_sheets = self.get_sheets()
+        if not self.credentials.client_id in current_sheets:
             subscription = self.add_sheet(self.credentials.client_id, hidden=False)
             print "subscription",subscription
             return subscription
         else:
             print "error multiple session on the same sheet!"
             self.erase_cells(self.credentials.client_id)
-            return self.get_sheets()[self.credentials.client_id]
+            return current_sheets[self.credentials.client_id]
 
     def unsubscribe(self):
         '''
@@ -480,7 +524,7 @@ class service_spreadsheet:
         except:
             return None
         result = self.service.spreadsheets().batchUpdate(spreadsheetId=self.spreadsheetId, body=update_body).execute()
-        print 'result',result
+        print 'UNSUBSCRIBE RESULT',result
         return result
 
     def advertise(self,changes):
@@ -491,7 +535,7 @@ class service_spreadsheet:
         '''
         for sheet_name,sheet_id in self.get_sheets().iteritems():
             if not sheet_name in (self.name,'settings','summary',self.credentials.client_id):
-                print 'advertise', sheet_name,
+                logger ('advertise '+ sheet_name)
                 append_body = {
                     "range": sheet_name+"!A:A",
                     "majorDimension":'COLUMNS',
@@ -501,7 +545,6 @@ class service_spreadsheet:
                                                                      range=sheet_name+"!A:A",
                                                                      body=append_body,
                                                                      valueInputOption='USER_ENTERED').execute()
-                print 'result_adv',sheet_name,result
 
 
     def update_header(self):
@@ -649,7 +692,7 @@ class service_spreadsheet:
         }
         for (field, row, value) in mods:
             if A1notation or field in self.header_map.keys():
-                if not value or value == qgis.core.NULL:
+                if not value or value == NULL:
                     cleared_value = "()"
                 else:
                     cleared_value = value
@@ -740,7 +783,7 @@ class service_spreadsheet:
         :param value: user entered value to be set
         :return: response object
         '''
-        if not value or value == qgis.core.NULL:
+        if not value or value == NULL:
             value = "()"
         body = {
             "range": A1_coords,
@@ -821,10 +864,14 @@ class service_spreadsheet:
     
     def new_fid(self):
         '''
-        the method returns a new fid for new feaute creation
+        the method returns a new fid for new feature creation
         :return:
         '''
-        return self.evaluate_formula('=MAX(%s!C2:C)' % self.name) +1
+        try:
+            next_free_fid = self.evaluate_formula("=MAX('%s'!C2:C)" % self.name) +1
+        except:
+            next_free_fid = 2
+        return next_free_fid
 
 
     def erase_cells(self,range):
@@ -889,7 +936,7 @@ class service_spreadsheet:
         :param values:
         :param child_sheet:
         :param fill_with_null: if true fills all new cells with null '()' default to None
-        :return:
+        :return: A1 notation of the column added
         '''
         if not child_sheet:
             child_sheet = self.name
@@ -903,11 +950,11 @@ class service_spreadsheet:
                 height = sheet['properties']['gridProperties']['rowCount']
                 break
         '''
-        width = self.evaluate_formula('=COUNTA(%s!1:1)' % self.name)
+        width = self.evaluate_formula("=COUNTA('%s'!1:1)" % child_sheet)
 
         if fill_with_null:
-            for k in range(0,self.evaluate_formula('=COUNT(%s!C:C)' % self.name)-1): #fill the column with null values
-                values.append('()')
+            for k in range(0,self.evaluate_formula("=COUNT('%s'!C:C)" % child_sheet)): #fill the column with null values
+                values.append('()') #need to handle values > 1 item!
         append_body = {
             "majorDimension": "COLUMNS",
             "values": [values]
@@ -919,7 +966,7 @@ class service_spreadsheet:
                                                              body=append_body,
                                                              valueInputOption='USER_ENTERED').execute()
         self.update_header()
-        return result
+        return A1_new_col
 
     
     def add_sheet(self, title, hidden=False, no_grid=False):
@@ -956,3 +1003,79 @@ class service_spreadsheet:
         #print "add_child_sheet",result
         return result['replies'][0]['addSheet']['properties']['sheetId']
         
+    def remove_deleted_rows(self):
+        ranges = [self.name + '!B2:C']
+        result = self.service.spreadsheets().values().batchGet(spreadsheetId=self.spreadsheetId,ranges=ranges).execute()
+        requests_body = {
+            'requests':[]
+        }
+        sheets = self.get_sheets()
+        deleted = 0
+        if 'values' in result['valueRanges'][0]:
+            for row in result['valueRanges'][0]['values']:
+                if row[0] == 'D':
+                    requests_body['requests'].append(
+                        {
+                            "deleteDimension": {
+                                "range": {
+                                    "sheetId": sheets[self.name],
+                                    "dimension": "ROWS",
+                                    "startIndex": int(row[1])-1-deleted,
+                                    "endIndex": int(row[1])-deleted
+                                }
+                            }
+                        }
+                    )
+                    deleted += 1
+            print requests_body
+            if deleted > 0:
+                result = self.service.spreadsheets().batchUpdate(spreadsheetId=self.spreadsheetId, body=requests_body).execute()
+                print result
+
+    def remove_deleted_columns(self):
+        ranges = [self.name + '!1:1']
+        result = self.service.spreadsheets().values().batchGet(spreadsheetId=self.spreadsheetId,ranges=ranges).execute()
+        requests_body_main = {
+            'requests':[]
+        }
+        requests_body_settings = {
+            'requests':[]
+        }
+        sheets = self.get_sheets()
+        deleted = 0
+        if 'values' in result['valueRanges'][0]:
+            print "VALUES", result['valueRanges'][0]['values'][0]
+            for count, column in enumerate (result['valueRanges'][0]['values'][0]):
+                if column[:8] == 'DELETED_':
+                    requests_body_main['requests'].append(
+                        {
+                            "deleteDimension": {
+                                "range": {
+                                    "sheetId": sheets[self.name],
+                                    "dimension": "COLUMNS",
+                                    "startIndex": count-deleted,
+                                    "endIndex": count+1-deleted
+                                }
+                            }
+                        }
+                    )
+                    requests_body_settings['requests'].append(
+                        {
+                            "deleteDimension": {
+                                "range": {
+                                    "sheetId": sheets['settings'],
+                                    "dimension": "COLUMNS",
+                                    "startIndex": count-deleted,
+                                    "endIndex": count+1-deleted
+                                }
+                            }
+                        }
+                    )
+                    deleted += 1
+            print requests_body_main
+            print requests_body_settings
+            if deleted > 0:
+                result = self.service.spreadsheets().batchUpdate(spreadsheetId=self.spreadsheetId, body=requests_body_main).execute()
+                print result
+                result = self.service.spreadsheets().batchUpdate(spreadsheetId=self.spreadsheetId, body=requests_body_settings).execute()
+                print result

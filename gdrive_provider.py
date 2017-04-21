@@ -26,10 +26,12 @@ __date__ = '2017-03-24'
 __copyright__ = 'Copyright 2017, Enrico Ferreguti'
 
 
-from PyQt4.QtCore import QSettings, QTranslator, qVersion, QCoreApplication, QTimer, QUrl, QSize
-from PyQt4.QtGui import QAction, QIcon, QDialog, QProgressBar, QDialogButtonBox, QListWidgetItem, QPixmap
 from qgis.core import QgsMapLayer, QgsVectorLayer, QgsProject, QgsMapLayerRegistry, QgsMessageLog, QgsNetworkAccessManager
 from qgis.utils import plugins
+
+
+from PyQt4.QtCore import QSettings, QTranslator, qVersion, QCoreApplication, QTimer, QUrl, QSize
+from PyQt4.QtGui import QAction, QIcon, QDialog, QProgressBar, QDialogButtonBox, QListWidgetItem, QPixmap
 # Initialize Qt resources from file resources.py
 import resources_rc
 # Import the code for the dialog
@@ -73,7 +75,10 @@ class Google_Drive_Provider:
         # initialize plugin directory
         self.plugin_dir = os.path.dirname(__file__)
         # initialize locale
-        locale = QSettings().value('locale/userLocale')[0:2]
+        try:
+            locale = QSettings().value('locale/userLocale')[0:2]
+        except:
+            locale = "en"
         locale_path = os.path.join(
             self.plugin_dir,
             'i18n',
@@ -189,7 +194,8 @@ class Google_Drive_Provider:
         """
         Create the menu entries and toolbar icons inside the QGIS GUI.
         """
-        
+
+        print "initgui"
         icon_path = os.path.join(self.plugin_dir,'icon.png')
         self.add_action(
             icon_path,
@@ -206,7 +212,7 @@ class Google_Drive_Provider:
         self.dlg.anyoneCanWrite.stateChanged.connect(self.anyoneCanWriteAction)
         self.dlg.anyoneCanRead.stateChanged.connect(self.anyoneCanReadAction)
         #self.dlg.updateWriteListButton.clicked.connect(self.updateReadWriteListAction)
-        self.dlg.updateWriteListButton.hide()
+        self.dlg.vacuumTablesButton.clicked.connect(self.vacuumTablesAction)
         self.dlg.textEdit_sample.hide()
         self.dlg.infoTextBox.page().setNetworkAccessManager(QgsNetworkAccessManager.instance())
         self.dlg.updateReadListButton.clicked.connect(self.updateReadWriteListAction)
@@ -280,8 +286,8 @@ class Google_Drive_Provider:
         '''
         if layer.type() != QgsMapLayer.VectorLayer:
             return
-        use = layer.customProperty("googleDriveId")
-        return not (use == False)
+        use = layer.customProperty("googleDriveId", defaultValue=None)
+        return use # not (use == None)
 
     def loadGDriveLayers(self,dom):
         '''
@@ -432,7 +438,7 @@ class Google_Drive_Provider:
         self.myDrive.renew_connection()
         self.dlg.anyoneCanRead.setChecked(False)
         self.dlg.anyoneCanWrite.setChecked(False)
-        current_spreadsheet_id =  self.available_sheets[item.text()]['id']
+        self.current_spreadsheet_id =  self.available_sheets[item.text()]['id']
         self.current_metadata = self.available_sheets[item.text()]#self.myDrive.getFileMetadata(current_spreadsheet_id)
         #self.dlg.infoTextBox.clear()
 
@@ -484,8 +490,8 @@ body {
         else:
             web_link = ''
 
-        owners = [owner["emailAddress"] for owner in self.current_metadata['owners']]
-        owners = " ".join(owners)
+        owners_list = [owner["emailAddress"] for owner in self.current_metadata['owners']]
+        owners = " ".join(owners_list)
 
         if self.current_metadata['capabilities']['canEdit']:
             writeCapability = "editable file"
@@ -531,6 +537,22 @@ body {
 
         self.dlg.readListTextBox.clear()
         self.dlg.readListTextBox.appendPlainText(' '.join(self.original_read_list))
+
+        if self.client_id in owners_list:
+            self.dlg.vacuumTablesButton.show()
+        else:
+            self.dlg.vacuumTablesButton.hide()
+
+    def vacuumTablesAction(self):
+        self.sheet_service = service_spreadsheet(self.authorization, spreadsheetId=self.current_spreadsheet_id)
+        sheets = self.sheet_service.get_sheets()
+        open_activity = list(set(sheets.keys()) - set([self.sheet_service.name, 'settings', 'summary', 'changes_log']))
+        print open_activity
+        if not open_activity:
+            self.sheet_service.remove_deleted_rows()
+            self.sheet_service.remove_deleted_columns()
+        else:
+            print "CAN'T VACUUM TABLES"
 
     def ex_viewMetadata(self,item,prev):
         '''
@@ -628,6 +650,7 @@ body {
         '''
         Method to sincronize read write boxes with current item metadata
         '''
+
         try:
             current_spreadsheet_id = self.current_metadata['id']
         except:
@@ -637,12 +660,14 @@ body {
         rw_commander["reader"] = {
             "text_widget": self.dlg.readListTextBox,
             "check_anyone_widget": self.dlg.anyoneCanRead,
-            "original_list": self.original_read_list
+            "original_list": self.original_read_list,
+            "update_publish": None
         }
         rw_commander["writer"] = {
             "text_widget": self.dlg.writeListTextBox,
             "check_anyone_widget": self.dlg.anyoneCanWrite,
-            "original_list": self.original_write_list
+            "original_list": self.original_write_list,
+            "update_publish": None
         }
 
         for role, widgets in rw_commander.iteritems():
@@ -653,18 +678,30 @@ body {
             if widgets['check_anyone_widget'].isChecked():
                 if not 'anyone' in cleaned_update_list:
                     cleaned_update_list.append('anyone')
-            print "ROLE", role,"PERMISSIONS", widgets['original_list'], cleaned_update_list
             delete_from_rw_list = list(set(widgets['original_list']) - set(cleaned_update_list))
             add_to_rw_list = list(set(cleaned_update_list) - set(widgets['original_list']))
             if 'permissions' in self.current_metadata:
                 for permission in self.current_metadata['permissions']:
-                    print permission
                     if permission['role'] == role:
                         if (permission['type'] == 'anyone' and not widgets['check_anyone_widget'].isChecked()) or \
                                 ('emailAddress' in permission and permission['emailAddress'] in delete_from_rw_list):
                             self.myDrive.remove_permission(current_spreadsheet_id, permission['id'])
+                        if (permission['type'] == 'anyone' and not widgets['check_anyone_widget'].isChecked()):
+                            widgets['update_publish'] = True
                 for new_read_user in add_to_rw_list:
                     self.myDrive.add_permission(current_spreadsheet_id, new_read_user,role)
+                    if new_read_user == 'anyone':
+                        widgets['update_publish'] = True
+        #update public link in summary sheet
+        if rw_commander["reader"]['update_publish'] or rw_commander["writer"]['update_publish']:
+            publish_state = rw_commander["reader"]["check_anyone_widget"].isChecked() or rw_commander["writer"]["check_anyone_widget"].isChecked()
+            if publish_state:
+                publicLink = "https://enricofer.github.io/GooGIS2CSV/converter.html?spreadsheet_id="+current_spreadsheet_id
+            else:
+                publicLink = ' '
+            service_sheet = service_spreadsheet(self.authorization, spreadsheetId=current_spreadsheet_id)
+            self.refresh_available()
+
 
     def updateAccountAction(self, error=None):
         '''
@@ -756,6 +793,8 @@ body {
         '''
         if not layer:
             layer = self.iface.legendInterface().currentLayer()
+        if not self.client_id or not self.myDrive:
+            self.updateAccountAction()
         self.myDrive.configure_service()
         self.gdrive_layer = GoogleDriveLayer(self, self.authorization, layer.name(), importing_layer=layer)
         self.refresh_available()
