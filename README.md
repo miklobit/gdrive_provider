@@ -1,5 +1,5 @@
 # GooGIS #
-####a Google Drive data provider for QGIS
+#### a Google Drive data provider for QGIS
 ![main dialog](https://github.com/enricofer/gdrive_provider/blob/master/docs/main_dialog.png?raw=true)
 ## 1. About the plugin
 GooGIS is a QGIS plugin is a experimental plugin derivated from [pseudo_csv_provider](http://github.com/g-sherman/pseudo_csv_provider) that keeps syncronization between a local memory layer and a remote google drive sheet. It provides a simple peer to peer cloud environment for sharing and editing geospatial contents with other users. It's only required a valid Google account.
