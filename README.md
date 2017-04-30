@@ -26,6 +26,13 @@ Managing Permission is only available for Layer owner. Once shared the layer bec
 
 For public layers, sharing (anyone can read/write or anyone can read checked) is a bit different and less automatic. To have give access to them we need to annotate their google drive id from layer details panel and send or share to those we want to invite to view or modify layer.
 Knowing a Google drive layer id is possible to insert in our GooGIS space clicking on "Import by id" button on main dialog and write it in the appropriate textbox.
+
+As example and test you can test the plugin on the following public layers ids:
+
+land use classification Venezia: 19UUyOg6i1cUZy6Q9S0c7_SJ5IcuH4lBFo1AY92_Q5pY
+land use classification Padova:  1wBFZ9k8lBJpKBdBi2G897ForLFp8Q1s-RO2WWMjRMcE
+sismic classification Veneto region: 1RxLk7DZ_Cw-eiegKzBAYDgmrpDjhcGfZY8Rcw9YB8Tg
+
 Public layers are marked with a "world icon" and user shared layer are marked with a "group icon"
 ##5. Sync data edits
 To load a layer in QGIS canvas, double click on available layer list or select it and then click "OK" button
