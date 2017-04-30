@@ -202,12 +202,13 @@ class Google_Drive_Provider:
             text=self.tr(u'Google Drive Provider '),
             callback=self.run,
             parent=self.iface.mainWindow())
+        '''
         self.add_action(
             os.path.join(self.plugin_dir,'test.png'),
             text=self.tr(u'Google Drive Provider test '),
             callback=self.test_suite,
             parent=self.iface.mainWindow())
-
+        '''
         self.dlg.setWindowIcon(QIcon(os.path.join(self.plugin_dir,'icon.png')))
         self.dlg.anyoneCanWrite.stateChanged.connect(self.anyoneCanWriteAction)
         self.dlg.anyoneCanRead.stateChanged.connect(self.anyoneCanReadAction)

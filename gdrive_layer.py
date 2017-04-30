@@ -130,7 +130,7 @@ class GoogleDriveLayer(QObject):
             self.service_sheet.set_geom_type(self.geom_types[importing_layer.geometryType()])
             self.service_sheet.set_style(self.layer_style_to_xml(importing_layer))
             self.service_sheet.set_sld(self.SLD_to_xml(importing_layer))
-            self.update_summary_sheet()
+            self.dirty = True
             self.saveFieldTypes(importing_layer.fields())
 
         self.reader = self.service_sheet.get_sheet_values()
@@ -873,6 +873,7 @@ class GoogleDriveLayer(QObject):
             print imagename, image_props['id']
             self.service_drive.delete_file(image_props['id'])
         result = self.service_drive.upload_image(tmp_path)
+        print "UPLOADED", result
         self.service_drive.add_permission(result['id'],'anyone','reader')
         webLink = 'https://drive.google.com/uc?export=view&id='+result['id']
         os.remove(tmp_path)

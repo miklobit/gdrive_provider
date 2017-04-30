@@ -150,6 +150,7 @@ class service_drive:
         #self.configure_service()
         authorized_http = self.credentials.authorize()
         self.service = discovery.build('drive', 'v3', http=authorized_http)
+        self.googis_folder = None
 
     def configure_service(self):
         '''
@@ -172,7 +173,7 @@ class service_drive:
         :param cacheQuery:
         :return: file metadata
         '''
-        required_fields = "name, mimeType, id, description, shared, trashed, version, modifiedTime, createdTime, permissions, size, capabilities, owners"
+        required_fields = "name, mimeType, id, description, shared, trashed, version, modifiedTime, createdTime, permissions, size, capabilities, owners, parents"
 
         if cacheQuery and hasattr(self, 'lastQuery') and self.lastQuery['id'] == fileId and self.lastQuery['type'] == 'getFileInfo':
             return self.lastQuery['metadata']
@@ -275,6 +276,8 @@ class service_drive:
         logger("created permission: " + json.dumps(self.service.permissions().create(fileId=spreadsheet_id, body=create_perm_body, sendNotificationEmail=None).execute()))
 
     def mark_as_GooGIS_sheet(self,fileId):
+        if not self.googis_folder:
+            self.googis_folder = self.get_googis_folder_id()
         update_body = {
           "appProperties": {
             "isGOOGISsheet": "OK"
@@ -300,6 +303,28 @@ class service_drive:
         }
         result = self.service.files().update(fileId=fileId, body=update_body).execute()
         return result
+
+    def set_googis_folder(self, fileId):
+        googis_folder = self.get_googis_folder_id()
+        update_body = {
+          "addParents": googis_folder
+        }
+        result = self.service.files().update(fileId=fileId, addParents=googis_folder).execute()
+        print "set_googis_folder",result
+        return result
+
+
+    def get_googis_folder_id(self):
+        search = self.service.files().list(q="mimeType = 'application/vnd.google-apps.folder' and name = 'GOOGIS'").execute()
+        if search["files"]:
+            return search["files"][0]['id']
+        else:
+            create_body = {
+                'name': 'GOOGIS',
+                'mimeType': 'application/vnd.google-apps.folder'
+            }
+            result = self.service.files().create(body=create_body).execute()
+            return result['id']
 
     def download_file(self,fileId):
         '''
@@ -373,12 +398,17 @@ class service_drive:
             return None
 
     def upload_image(self, filePath):
+        googis_folder = self.get_googis_folder_id()
+        print "GOOGIS folder", googis_folder
         body = {
-            'name': os.path.basename(filePath)
+            'name': os.path.basename(filePath),
+            'parents':[googis_folder]
         }
         media = MediaFileUpload(filePath, mimetype='image/png', resumable=None)
         if media:
-            return self.service.files().create(body=body, media_body=media).execute()
+            res = self.service.files().create(body=body, media_body=media).execute()
+            print res
+            return res
         else:
             return None
 
@@ -459,6 +489,7 @@ class service_spreadsheet:
                                                                  range=update_range,
                                                                  body=update_body,
                                                                  valueInputOption='USER_ENTERED').execute()
+            self.drive.set_googis_folder(self.spreadsheetId)
         else:
             raise Exception("service_sheet error: no sheet parameters provided")
             return
