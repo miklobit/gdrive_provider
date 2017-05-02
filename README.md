@@ -2,7 +2,7 @@
 #### a Google Drive data provider for QGIS
 ![main dialog](https://github.com/enricofer/gdrive_provider/blob/master/docs/main_dialog.png?raw=true)
 ## 1. About the plugin
-GooGIS is a QGIS plugin is a experimental plugin derivated from [pseudo_csv_provider](http://github.com/g-sherman/pseudo_csv_provider). It keeps syncronization between a local memory layer and a remote google drive sheet and provides a simple peer to peer cloud environment for sharing and editing geospatial contents with other users. It's only required a valid Google account.
+GooGIS is an experimental QGIS plugin derivated from [pseudo_csv_provider](http://github.com/g-sherman/pseudo_csv_provider) by @g-sherman. It keeps syncronization between a local memory layer and a remote google drive sheet and provides a simple peer to peer cloud environment for sharing and editing geospatial contents with other users. It's only required a valid Google account.
 ### How it works
 The QGIS layer data structure (geometry and attributes) is stored in a remote Google Spreadsheet. The plugin manages read/write rights on the layer, tracks concurrent data access and editing, and syncronizes local and remote table on start/end editing. 
 Many users can concurrently view and modify spatial data without conflicts. 
@@ -47,4 +47,4 @@ Once editing started the edited features are marked as locked in remote table to
 Locking acts at row level, so other users are free to edit other features without conflicting with current editing session.
 When editing ends local features mods are writed to remote and edited features are freed of applied locks
 
-The local/remote read/write activity is reported on message bar
+The local/remote read/write activity is reported on QGIS message bar
