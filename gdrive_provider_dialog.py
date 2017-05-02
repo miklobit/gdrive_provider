@@ -23,9 +23,9 @@
 
 import os
 
-from PyQt4 import QtGui, uic
+from PyQt4 import QtGui, QtCore, uic
 from qgis.gui import QgsMapLayerComboBox, QgsMapLayerProxyModel
-from qgis.core import QgsMapLayer
+from qgis.core import QgsMapLayer, QgsNetworkAccessManager
 
 FORM_CLASS1, _ = uic.loadUiType(os.path.join(
     os.path.dirname(__file__), 'gdrive_provider_dialog_base.ui'))
@@ -38,6 +38,9 @@ FORM_CLASS3, _ = uic.loadUiType(os.path.join(
 
 FORM_CLASS4, _ = uic.loadUiType(os.path.join(
     os.path.dirname(__file__), 'importFromID.ui'))
+
+FORM_CLASS5, _ = uic.loadUiType(os.path.join(
+    os.path.dirname(__file__), 'internalBrowser.ui'))
 
 
 class GoogleDriveProviderDialog(QtGui.QDialog, FORM_CLASS1):
@@ -171,4 +174,19 @@ class importFromIdDialog(QtGui.QDialog, FORM_CLASS4):
             return (dialog.result)
         else:
             return None
+
+
+class internalBrowser(QtGui.QDialog, FORM_CLASS5):
+    def __init__(self, target = '', title = '', parent = None):
+        """Constructor."""
+        super(internalBrowser, self).__init__(parent)
+        # Set up the user interface from Designer.
+        # After setupUI you can access any designer object by doing
+        # self.<objectname>, and you can use autoconnect slots - see
+        # http://qt-project.org/doc/qt-4.8/designer-using-a-ui-file.html
+        # #widgets-and-dialogs-with-auto-connect
+        self.setupUi(self)
+        self.setWindowTitle(title)
+        self.webView.page().setNetworkAccessManager(QgsNetworkAccessManager.instance())
+        self.webView.setUrl(QtCore.QUrl(target))
 

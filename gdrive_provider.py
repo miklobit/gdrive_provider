@@ -35,8 +35,7 @@ from PyQt4.QtGui import QAction, QIcon, QDialog, QProgressBar, QDialogButtonBox,
 # Initialize Qt resources from file resources.py
 import resources_rc
 # Import the code for the dialog
-from ui_internal_browser import Ui_InternalBrowser
-from gdrive_provider_dialog import GoogleDriveProviderDialog, accountDialog, comboDialog, importFromIdDialog
+from gdrive_provider_dialog import GoogleDriveProviderDialog, accountDialog, comboDialog, importFromIdDialog, internalBrowser
 from gdrive_layer import progressBar, GoogleDriveLayer
 
 
@@ -223,7 +222,9 @@ class Google_Drive_Provider:
         self.dlg.importByIdButton.clicked.connect(self.importByIdAction)
         self.dlg.listWidget.itemDoubleClicked.connect(self.run)
         self.dlg.refreshButton.clicked.connect(self.refresh_available)
-        self.dlg.button_box.button(QDialogButtonBox.Ok).setText("Load");
+        self.dlg.button_box.button(QDialogButtonBox.Ok).setText("Load")
+        self.dlg.helpButton.clicked.connect(self.helpAction)
+        self.helpBrowser = internalBrowser("https://enricofer.github.io/gdrive_provider", 'GooGIS help')
         orderByDict = collections.OrderedDict([
             ("order by modified time; descending", "modifiedTime desc"),
             ("order by modified time; ascending", "modifiedTime"),
@@ -250,6 +251,9 @@ class Google_Drive_Provider:
         QgsProject.instance().readProject.connect(self.loadGDriveLayers)
         QgsMapLayerRegistry.instance().layersWillBeRemoved.connect(self.updateSummarySheet)
 
+    def helpAction(self):
+        self.helpBrowser.show()
+        self.helpBrowser.raise_()
 
     def unload(self):
         """

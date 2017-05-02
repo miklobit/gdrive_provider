@@ -324,6 +324,13 @@
       </widget>
      </item>
      <item>
+      <widget class="QPushButton" name="helpButton">
+       <property name="text">
+        <string>help</string>
+       </property>
+      </widget>
+     </item>
+     <item>
       <spacer name="horizontalSpacer">
        <property name="orientation">
         <enum>Qt::Horizontal</enum>
