@@ -68,13 +68,23 @@ class accountDialog(QtGui.QDialog, FORM_CLASS2):
         self.buttonBox.accepted.connect(self.acceptedAction)
         self.buttonBox.rejected.connect(self.rejectedAction)
         self.gdriveAccount.setText(account)
+        self.gdriveAccount.textEdited.connect(self.gdriveAccountChanging)
         self.labelTerms.setText('<a href="https://developers.google.com/terms/">Google API terms of service</a>')
         self.labelTerms.setTextFormat(QtCore.Qt.RichText)
         self.labelTerms.setTextInteractionFlags(QtCore.Qt.TextBrowserInteraction)
         self.labelTerms.setOpenExternalLinks(True)
-        self.buttonBox.setEnabled(False)
-        self.licenceCheck.setChecked(False)
+
+
+        s = QtCore.QSettings()
+        TOSAgreement = self.client_id = s.value("GooGIS/term_of_service_agreement",  defaultValue =  None)
+        if TOSAgreement:
+            self.licenceCheck.setChecked(True)
+            self.buttonBox.setEnabled(True)
+        else:
+            self.licenceCheck.setChecked(False)
+            self.buttonBox.setEnabled(False)
         self.licenceCheck.stateChanged.connect(self.licenceCheckAction)
+
         if error:
             self.label = 'Invalid Google Drive Account'
             self.gdriveAccount.selectAll()
@@ -84,6 +94,14 @@ class accountDialog(QtGui.QDialog, FORM_CLASS2):
 
     def licenceCheckAction(self, state):
         self.buttonBox.setEnabled(self.licenceCheck.isChecked())
+        s = QtCore.QSettings()
+        s.setValue("GooGIS/term_of_service_agreement",self.licenceCheck.isChecked())
+
+    def gdriveAccountChanging(self,txt):
+        self.licenceCheck.setChecked(False)
+        self.buttonBox.setEnabled(False)
+        s = QtCore.QSettings()
+        s.setValue("GooGIS/term_of_service_agreement",self.licenceCheck.isChecked())
 
 
     def acceptedAction(self):
