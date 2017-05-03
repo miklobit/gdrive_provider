@@ -709,10 +709,11 @@ body {
 
 
     def updateAccountAction(self, error=None):
-        '''
+        """
         Method to update current google drive user
         :param error:
-        '''
+        """
+
         result = accountDialog.get_new_account(self.client_id, error=error)
         if result:
             self.authorization = google_authorization(self, SCOPES, os.path.join(self.plugin_dir, 'credentials'),
@@ -731,9 +732,9 @@ body {
 
 
     def exportToGDriveAction(self):
-        '''
+        """
         method to export a selected QGIS layer to Google drive (from dialog or layer contextual menu
-        '''
+        """
         layer = comboDialog.select(QgsMapLayerRegistry.instance().mapLayers(), self.iface.legendInterface().currentLayer())
         self.dup_to_google_drive(layer)
 
