@@ -68,12 +68,23 @@ class accountDialog(QtGui.QDialog, FORM_CLASS2):
         self.buttonBox.accepted.connect(self.acceptedAction)
         self.buttonBox.rejected.connect(self.rejectedAction)
         self.gdriveAccount.setText(account)
+        self.labelTerms.setText('<a href="https://developers.google.com/terms/">Google API terms of service</a>')
+        self.labelTerms.setTextFormat(QtCore.Qt.RichText)
+        self.labelTerms.setTextInteractionFlags(QtCore.Qt.TextBrowserInteraction)
+        self.labelTerms.setOpenExternalLinks(True)
+        self.buttonBox.setEnabled(False)
+        self.licenceCheck.setChecked(False)
+        self.licenceCheck.stateChanged.connect(self.licenceCheckAction)
         if error:
             self.label = 'Invalid Google Drive Account'
             self.gdriveAccount.selectAll()
         else:
             self.label = 'Google Drive Account'
         self.acceptedFlag = None
+
+    def licenceCheckAction(self, state):
+        self.buttonBox.setEnabled(self.licenceCheck.isChecked())
+
 
     def acceptedAction(self):
         self.result = self.gdriveAccount.text()
