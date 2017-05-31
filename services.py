@@ -33,7 +33,7 @@ from PyQt4.QtCore import QSettings
 from qgis.core import QgsMessageLog, NULL
 
 #Standard modules
-import httplib2
+import dup_httplib2
 import os
 import StringIO
 import csv
@@ -127,10 +127,10 @@ class google_authorization:
         proxyUser = s.value("proxy/proxyUser", "" )
         proxyPassword = s.value("proxy/proxyPassword", "" )
         if proxyEnabled == "true" and proxyType == 'HttpProxy': # test if there are proxy settings
-            proxyConf = httplib2.ProxyInfo(httplib2.socks.PROXY_TYPE_HTTP, proxyHost, int(proxyPort), proxy_user = proxyUser, proxy_pass = proxyPassword)
+            proxyConf = dup_httplib2.ProxyInfo(dup_httplib2.socks.PROXY_TYPE_HTTP, proxyHost, int(proxyPort), proxy_user = proxyUser, proxy_pass = proxyPassword)
         else:
             proxyConf =  None
-        self.httpConnection = httplib2.Http(proxy_info = proxyConf, ca_certs=os.path.join(self.credential_dir,'cacerts.txt'))
+        self.httpConnection = dup_httplib2.Http(proxy_info = proxyConf)#, ca_certs=os.path.join(self.credential_dir,'cacerts.txt'))
         auth = self.get_credentials()
         if auth:
             return auth.authorize(self.httpConnection)
