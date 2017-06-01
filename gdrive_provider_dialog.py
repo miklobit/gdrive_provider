@@ -24,6 +24,7 @@
 import os
 
 from PyQt4 import QtGui, QtCore, uic
+from PyQt4.QtCore import Qt
 from qgis.gui import QgsMapLayerComboBox, QgsMapLayerProxyModel
 from qgis.core import QgsMapLayer, QgsNetworkAccessManager
 
@@ -42,7 +43,11 @@ FORM_CLASS4, _ = uic.loadUiType(os.path.join(
 FORM_CLASS5, _ = uic.loadUiType(os.path.join(
     os.path.dirname(__file__), 'internalBrowser.ui'))
 
-
+try:
+    from pydevd import *
+except:
+    None
+    
 class GoogleDriveProviderDialog(QtGui.QDialog, FORM_CLASS1):
     def __init__(self, parent=None):
         """Constructor."""
@@ -77,12 +82,13 @@ class accountDialog(QtGui.QDialog, FORM_CLASS2):
 
         s = QtCore.QSettings()
         TOSAgreement = self.client_id = s.value("GooGIS/term_of_service_agreement",  defaultValue =  None)
-        if TOSAgreement:
+        if TOSAgreement and self.gdriveAccount.text()!="":
             self.licenceCheck.setChecked(True)
             self.buttonBox.setEnabled(True)
         else:
             self.licenceCheck.setChecked(False)
             self.buttonBox.setEnabled(False)
+            
         self.licenceCheck.stateChanged.connect(self.licenceCheckAction)
 
         if error:
@@ -93,6 +99,10 @@ class accountDialog(QtGui.QDialog, FORM_CLASS2):
         self.acceptedFlag = None
 
     def licenceCheckAction(self, state):
+        
+        if self.gdriveAccount.text()=="":
+            self.buttonBox.setEnabled(False)
+            return
         self.buttonBox.setEnabled(self.licenceCheck.isChecked())
         s = QtCore.QSettings()
         s.setValue("GooGIS/term_of_service_agreement",self.licenceCheck.isChecked())
@@ -116,6 +126,8 @@ class accountDialog(QtGui.QDialog, FORM_CLASS2):
     @staticmethod
     def get_new_account(account, error=None):
         dialog = accountDialog(account=account, error=error)
+        dialog.setWindowFlags(Qt.WindowSystemMenuHint | Qt.WindowTitleHint) 
+        
         result = dialog.exec_()
         dialog.show()
         if dialog.acceptedFlag:
@@ -160,6 +172,7 @@ class comboDialog(QtGui.QDialog, FORM_CLASS3):
     @staticmethod
     def select(layerMap,current=None):
         dialog = comboDialog(layerMap,current=current)
+        dialog.setWindowFlags(Qt.WindowSystemMenuHint | Qt.WindowTitleHint) 
         result = dialog.exec_()
         dialog.show()
         if dialog.acceptedFlag:
@@ -181,7 +194,17 @@ class importFromIdDialog(QtGui.QDialog, FORM_CLASS4):
         self.buttonBox.accepted.connect(self.acceptedAction)
         self.buttonBox.rejected.connect(self.rejectedAction)
         self.acceptedFlag = None
+          
+        #Signal QLineEdit   
+        self.lineEdit.textChanged.connect(self.ImportByIdChange)
 
+    def ImportByIdChange(self,string):
+        if string!="":
+            self.buttonBox.setEnabled(True)
+            return
+        self.buttonBox.setEnabled(False)  
+        return   
+   
     def acceptedAction(self):
         if self.lineEdit.text() != '':
             self.result = self.lineEdit.text()
@@ -197,6 +220,7 @@ class importFromIdDialog(QtGui.QDialog, FORM_CLASS4):
     @staticmethod
     def getNewId():
         dialog = importFromIdDialog()
+        dialog.setWindowFlags(Qt.WindowSystemMenuHint | Qt.WindowTitleHint) 
         result = dialog.exec_()
         dialog.show()
         if dialog.acceptedFlag:

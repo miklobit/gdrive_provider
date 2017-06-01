@@ -29,9 +29,9 @@ __copyright__ = 'Copyright 2017, Enrico Ferreguti'
 from qgis.core import QgsMapLayer, QgsVectorLayer, QgsProject, QgsMapLayerRegistry, QgsMessageLog, QgsNetworkAccessManager
 from qgis.utils import plugins
 
-
-from PyQt4.QtCore import QSettings, QTranslator, qVersion, QCoreApplication, QTimer, QUrl, QSize
-from PyQt4.QtGui import QAction, QIcon, QDialog, QProgressBar, QDialogButtonBox, QListWidgetItem, QPixmap
+from PyQt4 import  QtGui
+from PyQt4.QtCore import QSettings, QTranslator, qVersion, QCoreApplication, QTimer, QUrl, QSize, Qt
+from PyQt4.QtGui import QAction, QIcon, QDialog, QProgressBar, QDialogButtonBox, QListWidgetItem, QPixmap ,QCursor, QApplication
 # Initialize Qt resources from file resources.py
 import resources_rc
 # Import the code for the dialog
@@ -49,6 +49,10 @@ from email.utils import parseaddr
 
 from services import google_authorization, service_drive, service_spreadsheet
 
+try:
+    from pydevd import *
+except:
+    None
 
 # If modifying these scopes, delete your previously saved credentials
 # at ~/.credentials/sheets.googleapis.com-python-quickstart.json
@@ -233,6 +237,8 @@ class Google_Drive_Provider:
         ])
         for txt,data in orderByDict.items():
             self.dlg.orderByCombo.addItem(txt,data)
+        
+        self.dlg.orderByCombo.currentIndexChanged.connect(self.refresh_available)
 
 
 
@@ -252,6 +258,8 @@ class Google_Drive_Provider:
         QgsMapLayerRegistry.instance().layersWillBeRemoved.connect(self.updateSummarySheet)
 
     def helpAction(self):
+        self.helpBrowser.setWindowFlags(Qt.WindowSystemMenuHint | Qt.WindowTitleHint) 
+        self.helpBrowser.setMinimumSize(QSize(900, 600))
         self.helpBrowser.show()
         self.helpBrowser.raise_()
 
@@ -748,6 +756,7 @@ body {
             self.myDrive.configure_service()
             try:
                 response = self.myDrive.service.files().update(fileId=import_id, addParents='root').execute()
+                QtGui.qApp.processEvents()
                 self.refresh_available()
             except Exception, e:
                 logger("exception %s; can't open fileid %s" % (str(e),import_id))
@@ -771,7 +780,7 @@ body {
         if not self.client_id or not self.myDrive:
             self.updateAccountAction()
         self.refresh_available()
-
+        self.dlg.setWindowFlags(Qt.WindowSystemMenuHint | Qt.WindowTitleHint) 
         self.dlg.show()
         self.dlg.raise_()
         # Run the dialog event loop
@@ -800,7 +809,21 @@ body {
         if not layer:
             layer = self.iface.legendInterface().currentLayer()
         if not self.client_id or not self.myDrive:
-            self.updateAccountAction()
-        self.myDrive.configure_service()
-        self.gdrive_layer = GoogleDriveLayer(self, self.authorization, layer.name(), importing_layer=layer)
-        self.refresh_available()
+            self.updateAccountAction()           
+        try:
+            #Wait cursor
+            QApplication.setOverrideCursor(QCursor(Qt.WaitCursor))
+            
+            self.myDrive.configure_service()
+            QtGui.qApp.processEvents()
+            
+            self.gdrive_layer = GoogleDriveLayer(self, self.authorization, layer.name(), importing_layer=layer)
+            QtGui.qApp.processEvents()
+            
+            self.refresh_available()
+            
+            QApplication.restoreOverrideCursor()
+            QtGui.qApp.processEvents()
+        except:
+            QApplication.restoreOverrideCursor()
+            None
