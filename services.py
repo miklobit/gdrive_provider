@@ -227,7 +227,6 @@ class service_drive:
         else:
             app_query = " and trashed = false and appProperties has { key='isGOOGISsheet' and value='OK' }"
         query = "mimeType = '%s'%s%s" % (mimeTypeFilter, app_query, sharedWith)
-        print query
         raw_list = self.service.files().list(orderBy=orderBy, q=query, fields='files').execute()
         #print "raw_list", raw_list
         clean_dict = collections.OrderedDict()
@@ -249,6 +248,14 @@ class service_drive:
         :return: None
         '''
         logger( "Removed permission: " + json.dumps(self.service.permissions().delete(fileId=spreadsheet_id, permissionId=permission_id).execute()))
+
+    def publish_to_web(self,spreadsheet_id):
+        print self.service.revisions().update(fileId=spreadsheet_id, revisionId='head',
+                                        body={'published': True, 'publishAuto': True}).execute()
+
+    def unpublish_to_web(self,spreadsheet_id):
+        print self.service.revisions().update(fileId=spreadsheet_id, revisionId='head',
+                                        body={'published': False, 'publishAuto': False}).execute()
 
     def add_permission(self, spreadsheet_id, user_id, role, type = 'user'):
         '''
@@ -710,8 +717,6 @@ class service_spreadsheet:
         method to set multiple cells providing a mods list
         if a client_id is provided the status field if locked by client_id to prevent concurrent edits
         :param mods: (field/rows/value) list
-        :param lockBy: a client_id, default to None
-        :param sheet: sheet name, default main table
         :return:
         '''
         locked = None
@@ -856,24 +861,45 @@ class service_spreadsheet:
         '''
         return self.sheet_cell("settings!B2")
 
-    def set_style(self,xmlstyle):
+    def set_style_qgis(self, xmlstyle):
         '''
         method to set layer qgis style in the dedicated encoded setting sheet slot
         :param qgis layer xml text:
         :return: None
         '''
-        xmlstyle_zip =  base64.b64encode(zlib.compress(xmlstyle.encode("utf-8")))
-        self.set_sheet_cell("settings!A3",xmlstyle_zip)
+        self.pack_in_cell(xmlstyle,"settings!A3")
 
-    def set_sld(self,sldstyle):
+    def set_style_sld(self, sldstyle):
         '''
         for further uses...
         method to set layer sld style in the dedicated encoded setting sheet slot
         :param sld xml text:
         :return: None
         '''
-        sldstyle_zip =  base64.b64encode(zlib.compress(sldstyle.encode("utf-8")))
-        self.set_sheet_cell("settings!A4",sldstyle_zip)
+        self.pack_in_cell(sldstyle,"settings!A4")
+
+    def set_style_mapbox(self, mapboxstyle):
+        '''
+        for further uses...
+        method to set layer mapbox style in the dedicated encoded setting sheet slot
+        :param sld xml text:
+        :return: None
+        '''
+        self.pack_in_cell(mapboxstyle,"settings!A5")
+
+    def set_styles(self, qgisstyle, sldstyle, mapboxstyle):
+        '''
+        for further uses...
+        method to set layer mapbox style in the dedicated encoded setting sheet slot
+        :param sld xml text:
+        :return: None
+        '''
+        self.pack_in_cell(mapboxstyle,"settings!A5")
+
+    def pack_in_cell(self,content,cell):
+        zip_encoded =  base64.b64encode(zlib.compress(content.encode("utf-8")))
+        self.set_sheet_cell(cell,zip_encoded)
+
 
     def style(self):
         '''

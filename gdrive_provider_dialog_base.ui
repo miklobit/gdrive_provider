@@ -343,6 +343,13 @@
       </widget>
      </item>
      <item>
+      <widget class="QPushButton" name="webMapLinkButton">
+       <property name="text">
+        <string>Web map link</string>
+       </property>
+      </widget>
+     </item>
+     <item>
       <widget class="QPushButton" name="helpButton">
        <property name="text">
         <string>help</string>

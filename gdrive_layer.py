@@ -41,6 +41,7 @@ import traceback
 from time import sleep
 
 from tempfile import NamedTemporaryFile
+from PyQt4 import  QtGui
 from PyQt4.QtXml import QDomDocument
 from PyQt4.QtGui import QProgressBar, QAction, QIcon, QPixmap, QWidget
 from PyQt4.QtCore import QObject, pyqtSignal, QThread, QVariant, QSize, Qt
@@ -57,6 +58,7 @@ logger = lambda msg: QgsMessageLog.logMessage(msg, 'Googe Drive Provider', 1)
 
 from services import google_authorization, service_drive, service_spreadsheet
 
+from mapboxgl.mapboxgl import toMapboxgl
 
 from utils import slugify
 
@@ -75,7 +77,9 @@ class progressBar:
         progressBar.setValue(0)
         progressBar.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         widget.layout().addWidget(progressBar)
+        QtGui.qApp.processEvents()
         self.iface.messageBar().pushWidget(widget, QgsMessageBar.INFO, 50)
+        QtGui.qApp.processEvents()
 
     def stop(self, msg = ''):
         '''
@@ -128,8 +132,9 @@ class GoogleDriveLayer(QObject):
             self.spreadsheet_id = self.service_sheet.spreadsheetId
             self.service_sheet.set_crs(importing_layer.crs().authid())
             self.service_sheet.set_geom_type(self.geom_types[importing_layer.geometryType()])
-            self.service_sheet.set_style(self.layer_style_to_xml(importing_layer))
-            self.service_sheet.set_sld(self.SLD_to_xml(importing_layer))
+            self.service_sheet.set_style_qgis(self.layer_style_to_xml(importing_layer))
+            self.service_sheet.set_style_sld(self.SLD_to_xml(importing_layer))
+            self.service_sheet.set_style_mapbox(self.layer_style_to_json(importing_layer))
             self.dirty = True
             self.saveFieldTypes(importing_layer.fields())
 
@@ -241,7 +246,9 @@ class GoogleDriveLayer(QObject):
         landing method for rendererChanged signal. It stores xml qgis style definition to the setting sheet
         '''
         logger( "style changed")
-        self.service_sheet.set_style(self.layer_style_to_xml(self.lyr))
+        self.service_sheet.set_style_qgis(self.layer_style_to_xml(self.lyr))
+        self.service_sheet.set_style_sld(self.SLD_to_xml(self.lyr))
+        self.service_sheet.set_style_mapbox(self.layer_style_to_json(self.lyr))
 
     def renew_connection(self):
         '''
@@ -802,7 +809,11 @@ class GoogleDriveLayer(QObject):
         XMLDocument.setContent(xml)
         XMLStyleNode = XMLDocument.namedItem("style")
         qgis_layer.readSymbology(XMLStyleNode, error)
-        #print "readSymbology error", error
+
+    def layer_style_to_json(self, qgis_layer):
+        mapbox_style = toMapboxgl([qgis_layer])
+        print mapbox_style
+        return json.dumps(mapbox_style)
 
     def get_gdrive_id(self):
         '''
@@ -851,6 +862,10 @@ class GoogleDriveLayer(QObject):
         Creates a summary sheet with thumbnail, layer metadata and online view link
         '''
         #create a layer snapshot and upload it to google drive
+        mapbox_style = self.service_sheet.sheet_cell('settings!A5')
+        if not mapbox_style:
+            print "migrating mapbox style"
+            self.service_sheet.set_style_mapbox(self.layer_style_to_json(self.lyr))
         if not self.dirty:
             return
         canvas = QgsMapCanvas()
@@ -916,7 +931,13 @@ class GoogleDriveLayer(QObject):
             else:
                 public = False
         if public:
-            publicLink = "https://enricofer.github.io/GooGIS2CSV/converter.html?spreadsheet_id="+self.spreadsheet_id
+            range = 'summary!A9:B9'
+            update_body = {
+                "range": range,
+                "values": [['public link', "https://enricofer.github.io/GooGIS2CSV/converter.html?spreadsheet_id="+self.spreadsheet_id]]
+            }
+            print "update_public_link", self.service_sheet.service.spreadsheets().values().update(spreadsheetId=self.spreadsheet_id,range=range, body=update_body, valueInputOption='USER_ENTERED').execute()
+
         #hide worksheets except summary
         sheets = self.service_sheet.get_sheets()
         #self.service_sheet.toggle_sheet('summary', sheets['summary'], hidden=None)

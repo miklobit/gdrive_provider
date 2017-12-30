@@ -35,7 +35,7 @@ from PyQt4.QtGui import QAction, QIcon, QDialog, QProgressBar, QDialogButtonBox,
 # Initialize Qt resources from file resources.py
 import resources_rc
 # Import the code for the dialog
-from gdrive_provider_dialog import GoogleDriveProviderDialog, accountDialog, comboDialog, importFromIdDialog, internalBrowser
+from gdrive_provider_dialog import GoogleDriveProviderDialog, accountDialog, comboDialog, importFromIdDialog, internalBrowser, webMapDialog
 from gdrive_layer import progressBar, GoogleDriveLayer
 
 
@@ -226,6 +226,7 @@ class Google_Drive_Provider:
         self.dlg.importByIdButton.clicked.connect(self.importByIdAction)
         self.dlg.listWidget.itemDoubleClicked.connect(self.run)
         self.dlg.refreshButton.clicked.connect(self.refresh_available)
+        self.dlg.webMapLinkButton.clicked.connect(self.webMapLinkAction)
         self.dlg.button_box.button(QDialogButtonBox.Ok).setText("Load")
         self.dlg.helpButton.clicked.connect(self.helpAction)
         self.helpBrowser = internalBrowser("https://enricofer.github.io/gdrive_provider", 'GooGIS help')
@@ -708,11 +709,21 @@ body {
         #update public link in summary sheet
         if rw_commander["reader"]['update_publish'] or rw_commander["writer"]['update_publish']:
             publish_state = rw_commander["reader"]["check_anyone_widget"].isChecked() or rw_commander["writer"]["check_anyone_widget"].isChecked()
+            print "publish_state",publish_state
             if publish_state:
-                publicLink = "https://enricofer.github.io/GooGIS2CSV/converter.html?spreadsheet_id="+current_spreadsheet_id
+                publicLinkContent = ['public link', "https://enricofer.github.io/GooGIS2CSV/converter.html?spreadsheet_id="+current_spreadsheet_id]
+                self.myDrive.publish_to_web(current_spreadsheet_id)
             else:
-                publicLink = ' '
+                publicLinkContent = [' ', ' ']
+                self.myDrive.unpublish_to_web(current_spreadsheet_id)
             service_sheet = service_spreadsheet(self.authorization, spreadsheetId=current_spreadsheet_id)
+            range = 'summary!A9:B9'
+            update_body = {
+                "range": range,
+                "values": [publicLinkContent]
+            }
+            print "update_public_link", service_sheet.service.spreadsheets().values().update(spreadsheetId=current_spreadsheet_id,range=range, body=update_body, valueInputOption='USER_ENTERED').execute()
+
             self.refresh_available()
 
 
@@ -824,6 +835,14 @@ body {
             
             QApplication.restoreOverrideCursor()
             QtGui.qApp.processEvents()
-        except:
+        except Exception as e:
+            print "EXCEPTION", str(e)
             QApplication.restoreOverrideCursor()
             None
+
+    def webMapLinkAction(self):
+        '''
+        Method to select public maps for browsing them in external webbrowser
+        :return:
+        '''
+        print webMapDialog.get_web_link(self.available_sheets)
