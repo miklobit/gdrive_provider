@@ -1,0 +1,9 @@
+*.pyc
+Makefile
+*.log
+help/
+.idea/
+sample/
+.DS_Store
+temp/*
+test/*
