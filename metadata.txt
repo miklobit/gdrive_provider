@@ -9,7 +9,7 @@
 [general]
 name=GooGIS
 qgisMinimumVersion=2.18
-qgisMaximumVersion=2.90
+qgisMaximumVersion=3.2.9
 description=a Google Drive data provider for QGIS
 version=0.9.0
 author=Enrico Ferreguti
